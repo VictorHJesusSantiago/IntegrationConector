@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/IntegrationConnector.Api/IntegrationConnector.Api.csproj" />
+    <Project Path="src/IntegrationConnector.Connectors/IntegrationConnector.Connectors.csproj" />
+    <Project Path="src/IntegrationConnector.Core/IntegrationConnector.Core.csproj" />
+    <Project Path="src/IntegrationConnector.Engine/IntegrationConnector.Engine.csproj" />
+    <Project Path="src/IntegrationConnector.Infrastructure/IntegrationConnector.Infrastructure.csproj" />
+    <Project Path="src/IntegrationConnector.Transformation/IntegrationConnector.Transformation.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/IntegrationConnector.Tests/IntegrationConnector.Tests.csproj" />
+  </Folder>
+</Solution>

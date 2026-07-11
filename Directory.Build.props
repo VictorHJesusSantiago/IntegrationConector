@@ -1,0 +1,11 @@
+<Project>
+
+  <!-- Aplicado a todos os projetos da solução: habilita analisadores estáticos (Roslyn/.NET analyzers) no build. -->
+  <PropertyGroup>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>Recommended</AnalysisMode>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+</Project>
