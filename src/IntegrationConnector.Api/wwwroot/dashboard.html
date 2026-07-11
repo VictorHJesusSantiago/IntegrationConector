@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8" />
+<title>Painel de Observabilidade - Plataforma de Integração</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 24px; }
+  .cards { display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
+  .card { background: #1e293b; border-radius: 8px; padding: 16px 24px; min-width: 140px; }
+  .card .value { font-size: 28px; font-weight: bold; }
+  .card .label { font-size: 12px; color: #94a3b8; text-transform: uppercase; }
+  .ok { color: #4ade80; } .bad { color: #f87171; } .neutral { color: #60a5fa; }
+  table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 12px; font-size: 13px; border-bottom: 1px solid #334155; }
+  th { color: #94a3b8; font-weight: normal; }
+  .bar-wrap { background: #1e293b; border-radius: 8px; padding: 16px; margin-bottom: 32px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .bar-label { width: 110px; font-size: 12px; color: #94a3b8; }
+  .bar { height: 14px; background: #3b82f6; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Painel de Observabilidade — Pipelines</h1>
+
+<div class="cards" id="cards"></div>
+
+<div class="bar-wrap">
+  <div class="bar-row"><div class="bar-label">Sucesso</div><div class="bar ok-bar" id="bar-success"></div></div>
+  <div class="bar-row"><div class="bar-label">Falha</div><div class="bar bad-bar" id="bar-failed"></div></div>
+  <div class="bar-row"><div class="bar-label">Em execução</div><div class="bar neutral-bar" id="bar-running"></div></div>
+</div>
+
+<h2 style="font-size:14px;color:#94a3b8;">Falhas recentes</h2>
+<table>
+  <thead><tr><th>Pipeline</th><th>Início</th><th>Erro</th></tr></thead>
+  <tbody id="failures-body"></tbody>
+</table>
+
+<script>
+async function load() {
+  const stats = await (await fetch('/api/pipeline-runs/stats')).json();
+  const failures = await (await fetch('/api/pipeline-runs/failures?take=20')).json();
+
+  document.getElementById('cards').innerHTML = `
+    <div class="card"><div class="value neutral">${stats.totalRuns}</div><div class="label">Total de execuções</div></div>
+    <div class="card"><div class="value ok">${stats.succeeded}</div><div class="label">Sucesso</div></div>
+    <div class="card"><div class="value bad">${stats.failed}</div><div class="label">Falha</div></div>
+    <div class="card"><div class="value neutral">${stats.successRatePercent}%</div><div class="label">Taxa de sucesso</div></div>
+  `;
+
+  const max = Math.max(stats.succeeded, stats.failed, stats.running, 1);
+  document.getElementById('bar-success').style.width = (stats.succeeded / max * 100) + '%';
+  document.getElementById('bar-success').style.background = '#4ade80';
+  document.getElementById('bar-failed').style.width = (stats.failed / max * 100) + '%';
+  document.getElementById('bar-failed').style.background = '#f87171';
+  document.getElementById('bar-running').style.width = (stats.running / max * 100) + '%';
+  document.getElementById('bar-running').style.background = '#60a5fa';
+
+  document.getElementById('failures-body').innerHTML = failures.map(f => `
+    <tr>
+      <td>${f.pipelineId}</td>
+      <td>${new Date(f.startedAt).toLocaleString('pt-BR')}</td>
+      <td>${(f.errorMessage || '').substring(0, 120)}</td>
+    </tr>
+  `).join('');
+}
+
+load();
+setInterval(load, 15000);
+</script>
+</body>
+</html>
