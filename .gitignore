@@ -1,0 +1,43 @@
+# Build outputs
+bin/
+obj/
+out/
+publish/
+
+# VS / Rider / VSCode
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.idea/
+
+# Testes
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+# Secrets / ambiente
+.env
+.env.*
+*.pfx
+appsettings.*.local.json
+secrets.json
+
+# Logs
+*.log
+logs/
+
+# Banco de dados local
+*.db
+*.sqlite
+
+# Pacotes
+*.nupkg
+.nuget/
+
+# SO
+.DS_Store
+Thumbs.db
