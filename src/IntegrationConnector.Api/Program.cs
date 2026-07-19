@@ -25,6 +25,7 @@ using IntegrationConnector.Infrastructure.Repositories;
 using IntegrationConnector.Transformation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -77,7 +78,13 @@ builder.Services.AddSingleton<IConnectorPlugin, LiteDbConnectorPlugin>();
 builder.Services.AddSingleton<IConnectorPluginFactory, ConnectorPluginFactory>();
 
 // ---------- Segurança: criptografia de segredos de conector (Data Protection local) ----------
-builder.Services.AddDataProtection();
+// As chaves precisam ser persistidas fora do filesystem efêmero do container: sem isso, todo
+// segredo de conector já cifrado fica permanentemente indecifrável após qualquer restart/redeploy.
+var keysDirectory = builder.Configuration["DataProtection:KeysDirectory"] ?? "/keys";
+Directory.CreateDirectory(keysDirectory);
+builder.Services.AddDataProtection()
+    .SetApplicationName("IntegrationConnector")
+    .PersistKeysToFileSystem(new DirectoryInfo(keysDirectory));
 builder.Services.AddSingleton<ISecretProtector, SecretProtector>();
 
 // ---------- Transformação e engine de execução ----------
@@ -150,7 +157,12 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add(new AuthorizeFilter());
-}).AddNewtonsoftJson();
+}).AddNewtonsoftJson(options =>
+{
+    // Entidades como Pipeline <-> PipelineVersion e PipelineRun <-> PipelineRunLog têm referências
+    // de navegação bidirecionais (EF Core); sem isso, a serialização quebra com StackOverflow/loop.
+    options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
+});
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -227,8 +239,11 @@ app.UseRateLimiter();
 
 app.UseHttpMetrics();
 
-app.UseAuthentication();
-app.UseAuthorization();
+// Arquivos estáticos (dashboard.html) e o painel do Hangfire (autorização própria via
+// HangfireDashboardAuthFilter) ficam ANTES da autenticação JWT da API — do contrário, o
+// FallbackPolicy global bloquearia essas requisições com 401 mesmo sem endpoint de controller.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
@@ -236,8 +251,8 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
     Authorization = new[] { new HangfireDashboardAuthFilter() }
 });
 
-app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 app.MapHealthChecks("/health").AllowAnonymous();
