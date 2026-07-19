@@ -35,9 +35,31 @@ public class SftpConnectorPlugin : IConnectorPlugin
         client.Connect();
 
         var remotePath = CombinePath(config.RemoteDirectory, operation.Target);
+        EnsureRemoteDirectoryExists(client, remotePath);
+
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(payloadJson));
         client.UploadFile(stream, remotePath, canOverride: true);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// SSH.NET não cria diretórios remotos automaticamente ao enviar um arquivo (diferente do
+    /// FluentFTP, usado no conector FTP, que tem a opção createRemoteDir). Cria cada segmento do
+    /// caminho que ainda não existir antes do upload.
+    /// </summary>
+    private static void EnsureRemoteDirectoryExists(SftpClient client, string remoteFilePath)
+    {
+        var directory = remoteFilePath[..remoteFilePath.LastIndexOf('/')];
+        if (string.IsNullOrEmpty(directory)) return;
+
+        var segments = directory.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var current = string.Empty;
+        foreach (var segment in segments)
+        {
+            current += "/" + segment;
+            if (!client.Exists(current))
+                client.CreateDirectory(current);
+        }
     }
 
     public Task<ConnectorTestResult> TestConnectionAsync(Connector connector, CancellationToken ct)
