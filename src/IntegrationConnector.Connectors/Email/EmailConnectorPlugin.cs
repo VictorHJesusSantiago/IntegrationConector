@@ -66,22 +66,37 @@ public class EmailConnectorPlugin : IConnectorPlugin
         return messages.ToString(Newtonsoft.Json.Formatting.None);
     }
 
+    /// <summary>
+    /// Envia um e-mail por registro do payload transformado. O motor de execução grava lotes como um
+    /// único array JSON mesmo quando MaxDegreeOfParallelism = 1 (padrão); diferente de conectores de
+    /// banco/arquivo, um e-mail não pode representar "vários registros" de uma vez, então cada item
+    /// do array vira uma mensagem individual (mesmo comportamento de um array com 1 elemento).
+    /// </summary>
     public async Task WriteAsync(Connector connector, ConnectorOperation operation, string payloadJson, CancellationToken ct)
     {
         var config = ParseConfig(connector);
-        var payload = JObject.Parse(string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson);
         var template = string.IsNullOrWhiteSpace(operation.PayloadTemplateJson) ? new JObject() : JObject.Parse(operation.PayloadTemplateJson);
 
-        var message = new MimeMessage();
-        message.From.Add(MailboxAddress.Parse(config.FromAddress));
-        message.To.Add(MailboxAddress.Parse(operation.Target));
-        message.Subject = template["subject"]?.ToString() ?? payload["subject"]?.ToString() ?? "Notificação da Plataforma de Integração";
-        message.Body = new TextPart("plain") { Text = payload["body"]?.ToString() ?? payload.ToString() };
+        var token = JToken.Parse(string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson);
+        var records = token is JArray array ? array.OfType<JObject>().ToList() : new List<JObject> { (JObject)token };
 
         using var client = new SmtpClient();
         await client.ConnectAsync(config.SmtpHost, config.SmtpPort, config.SmtpUseSsl ? SecureSocketOptions.StartTls : SecureSocketOptions.None, ct);
-        await client.AuthenticateAsync(config.Username, config.Password, ct);
-        await client.SendAsync(message, ct);
+
+        if (!string.IsNullOrWhiteSpace(config.Username) && client.Capabilities.HasFlag(SmtpCapabilities.Authentication))
+            await client.AuthenticateAsync(config.Username, config.Password, ct);
+
+        foreach (var payload in records)
+        {
+            var message = new MimeMessage();
+            message.From.Add(MailboxAddress.Parse(config.FromAddress));
+            message.To.Add(MailboxAddress.Parse(operation.Target));
+            message.Subject = template["subject"]?.ToString() ?? payload["subject"]?.ToString() ?? "Notificação da Plataforma de Integração";
+            message.Body = new TextPart("plain") { Text = payload["body"]?.ToString() ?? payload.ToString() };
+
+            await client.SendAsync(message, ct);
+        }
+
         await client.DisconnectAsync(true, ct);
     }
 
