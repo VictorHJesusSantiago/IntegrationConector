@@ -119,7 +119,14 @@ public class PipelineExecutor : IPipelineExecutor
         finally
         {
             run.FinishedAt = DateTime.UtcNow;
-            _runRepository.Update(run);
+            // Não chamar _runRepository.Update(run) aqui: "run" já está rastreado pelo mesmo
+            // DbContext desde o AddAsync inicial (mesmo escopo/execução). Forçar Update() no grafo
+            // faria o EF Core marcar os PipelineRunLog recém-adicionados (com Guid gerado no
+            // cliente) como "Modified" em vez de "Added", gerando um UPDATE para uma linha
+            // inexistente (DbUpdateConcurrencyException: 0 linhas afetadas) — e quebrando TODA
+            // execução, com ou sem falha, já que logs de "read"/"transform"/"write" são sempre
+            // adicionados. As mudanças de propriedades escalares e os novos logs já são detectados
+            // automaticamente pelo change tracker, sem necessidade de Update() explícito.
             await _runRepository.SaveChangesAsync(ct);
             _cancellationRegistry.Remove(run.Id);
         }
@@ -148,14 +155,23 @@ public class PipelineExecutor : IPipelineExecutor
 
         if (policySpec.CircuitBreakerEnabled)
         {
+            // O circuit breaker é cacheado por pipeline em um dicionário estático (necessário para
+            // que o estado "aberto" realmente persista entre execuções distintas). Por isso, seus
+            // callbacks NUNCA podem capturar objetos de uma execução específica (como "run" ou,
+            // transitivamente, o DbContext desta chamada via AddLog/_runRepository) — na primeira
+            // vez que o circuito abrir numa execução POSTERIOR, esses objetos já estariam
+            // descartados (o escopo de DI daquele job já terminou), quebrando com
+            // ObjectDisposedException. Por isso usamos apenas o _logger (seguro entre escopos) aqui;
+            // o registro do erro na execução atual acontece no catch genérico de ExecuteAsync.
+            var pipelineId = pipeline.Id;
             var breaker = CircuitBreakers.GetOrAdd(pipeline.Id, _ => Policy
                 .Handle<Exception>()
                 .CircuitBreakerAsync(
                     policySpec.CircuitBreakerFailureThreshold,
                     TimeSpan.FromSeconds(policySpec.CircuitBreakerBreakDurationSeconds),
-                    onBreak: (ex, breakDelay) => AddLog(run, "Error", "circuit-breaker", $"Circuito aberto por {breakDelay.TotalSeconds:0}s após falhas consecutivas: {ex.Message}"),
-                    onReset: () => AddLog(run, "Information", "circuit-breaker", "Circuito fechado novamente."),
-                    onHalfOpen: () => AddLog(run, "Information", "circuit-breaker", "Circuito em teste (half-open)")));
+                    onBreak: (ex, breakDelay) => _logger.LogError(ex, "Circuito aberto para o pipeline {PipelineId} por {BreakSeconds}s após falhas consecutivas.", pipelineId, breakDelay.TotalSeconds),
+                    onReset: () => _logger.LogInformation("Circuito fechado novamente para o pipeline {PipelineId}.", pipelineId),
+                    onHalfOpen: () => _logger.LogInformation("Circuito em teste (half-open) para o pipeline {PipelineId}.", pipelineId)));
 
             resiliencePolicy = Policy.WrapAsync(retryPolicy, breaker);
         }
@@ -201,6 +217,7 @@ public class PipelineExecutor : IPipelineExecutor
         if (definition.Aggregations.Count > 0)
         {
             var aggregates = AggregationEngine.Aggregate(sourceJson, definition.Aggregations);
+            run.AggregationResultJson = aggregates.ToString(Newtonsoft.Json.Formatting.None);
             AddLog(run, "Information", "aggregate", $"Agregações calculadas: {aggregates}");
         }
 
@@ -375,8 +392,11 @@ public class PipelineExecutor : IPipelineExecutor
     {
         var connector = await _connectorRepository.GetByIdAsync(connectorId, ct)
             ?? throw new InvalidOperationException($"Conector '{connectorId}' não encontrado.");
-        connector.ConfigurationJson = _secretProtector.Unprotect(connector.ConfigurationJson);
-        return connector;
+
+        // Retorna uma cópia não rastreada com o config decifrado — nunca mutar a entidade rastreada
+        // (veja ConnectorExtensions.WithDecryptedConfig): o SaveChanges do PipelineRun mais adiante
+        // no mesmo DbContext gravaria o segredo em texto plano de volta no banco.
+        return connector.WithDecryptedConfig(_secretProtector);
     }
 
     private static string ComputeHash(string input)
@@ -401,8 +421,18 @@ public class PipelineExecutor : IPipelineExecutor
         }
     }
 
-    private static void AddLog(PipelineRun run, string level, string step, string message)
-        => run.Logs.Add(new PipelineRunLog { PipelineRunId = run.Id, Level = level, Step = step, Message = message });
+    /// <summary>
+    /// Adiciona um log tanto à coleção em memória (para uso imediato, ex.: contagem) quanto o rastreia
+    /// explicitamente como "Added" no repositório — necessário porque seu Id é um Guid gerado no
+    /// cliente; sem o rastreamento explícito, o EF Core o marcaria como "Modified" ao descobri-lo via
+    /// a coleção de navegação de um PipelineRun já rastreado, gerando um UPDATE para uma linha inexistente.
+    /// </summary>
+    private void AddLog(PipelineRun run, string level, string step, string message)
+    {
+        var log = new PipelineRunLog { PipelineRunId = run.Id, Level = level, Step = step, Message = message };
+        run.Logs.Add(log);
+        _runRepository.AddLog(log);
+    }
 }
 
 public interface IPipelineExecutor

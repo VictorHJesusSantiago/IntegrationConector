@@ -29,5 +29,8 @@ public class PipelineRun
     /// <summary>Indica se a execução foi em modo dry-run (não gravou no destino).</summary>
     public bool IsDryRun { get; set; }
 
+    /// <summary>Resultado das agregações (Sum/Count/Avg/Min/Max) calculadas sobre o payload de origem, em JSON.</summary>
+    public string? AggregationResultJson { get; set; }
+
     public List<PipelineRunLog> Logs { get; set; } = new();
 }
