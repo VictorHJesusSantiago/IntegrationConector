@@ -3,6 +3,7 @@ using IntegrationConnector.Core.Dtos;
 using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Enums;
 using IntegrationConnector.Core.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -39,6 +40,7 @@ public class PipelineGovernanceController : ControllerBase
         return Ok(new { fromVersion = v1, toVersion = v2, changes = diff });
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("versions/submit-for-review")]
     public async Task<IActionResult> SubmitForReview(Guid pipelineId, SubmitForReviewRequest request, CancellationToken ct)
     {
@@ -52,6 +54,7 @@ public class PipelineGovernanceController : ControllerBase
         return Ok(version);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("versions/approve")]
     public async Task<IActionResult> Approve(Guid pipelineId, ApproveVersionRequest request, CancellationToken ct)
     {
@@ -84,6 +87,7 @@ public class PipelineGovernanceController : ControllerBase
     }
 
     /// <summary>Cria um novo pipeline a partir de um bundle exportado (portabilidade entre ambientes).</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("~/api/pipelines/import")]
     public async Task<ActionResult<Pipeline>> Import(PipelineExportBundle bundle, CancellationToken ct)
     {
@@ -111,6 +115,7 @@ public class PipelineGovernanceController : ControllerBase
     }
 
     /// <summary>Clona o pipeline (com a definição da versão ativa) como ponto de partida para um novo fluxo.</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("clone")]
     public async Task<ActionResult<Pipeline>> Clone(Guid pipelineId, CancellationToken ct)
     {

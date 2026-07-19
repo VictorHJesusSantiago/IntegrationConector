@@ -5,6 +5,7 @@ using IntegrationConnector.Api.Validation;
 using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Enums;
 using IntegrationConnector.Core.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 
@@ -42,6 +43,7 @@ public class PipelinesController : ControllerBase
         return pipeline is null ? NotFound() : Ok(pipeline);
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost]
     public async Task<ActionResult<Pipeline>> Create(CreatePipelineRequest request, CancellationToken ct)
     {
@@ -81,6 +83,7 @@ public class PipelinesController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = pipeline.Id }, pipeline);
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<Pipeline>> Update(Guid id, UpdatePipelineRequest request, CancellationToken ct)
     {
@@ -105,6 +108,7 @@ public class PipelinesController : ControllerBase
         return Ok(pipeline);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
@@ -120,6 +124,7 @@ public class PipelinesController : ControllerBase
     }
 
     /// <summary>Encadeia este pipeline para disparar outro automaticamente após sucesso (ou remove o encadeamento com null).</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPut("{id:guid}/chain")]
     public async Task<ActionResult<Pipeline>> SetChain(Guid id, [FromBody] Guid? nextPipelineId, CancellationToken ct)
     {
@@ -133,6 +138,7 @@ public class PipelinesController : ControllerBase
     }
 
     /// <summary>Publica uma nova versão da definição do pipeline, preservando o histórico das anteriores.</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("{id:guid}/versions")]
     public async Task<ActionResult<PipelineVersion>> PublishVersion(Guid id, PublishPipelineVersionRequest request, CancellationToken ct)
     {
@@ -160,13 +166,18 @@ public class PipelinesController : ControllerBase
         pipeline.Versions.Add(version);
         pipeline.ActiveVersionNumber = nextVersion;
 
-        _repository.Update(pipeline);
+        // "pipeline" já está rastreado (veio de GetByIdWithVersionsAsync). AddVersion rastreia a
+        // NOVA PipelineVersion explicitamente como "Added" — do contrário, o EF Core a marcaria como
+        // "Modified" (Guid gerado no cliente, não-default), gerando um UPDATE para uma linha
+        // inexistente. A mudança em ActiveVersionNumber é detectada automaticamente pelo tracker.
+        _repository.AddVersion(version);
         await _repository.SaveChangesAsync(ct);
         await AuditAsync("PublishVersion", pipeline.Id, $"{pipeline.Name} v{nextVersion}", ct);
         return Ok(version);
     }
 
     /// <summary>Reverte o pipeline para uma versão anteriormente publicada (rollback).</summary>
+    [Authorize(Roles = "Admin")]
     [HttpPost("{id:guid}/versions/{versionNumber:int}/activate")]
     public async Task<ActionResult<Pipeline>> ActivateVersion(Guid id, int versionNumber, CancellationToken ct)
     {
@@ -183,6 +194,7 @@ public class PipelinesController : ControllerBase
     }
 
     /// <summary>Dispara a execução manual do pipeline em segundo plano (via Hangfire) e retorna imediatamente.</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("{id:guid}/run")]
     public async Task<IActionResult> RunNow(Guid id, CancellationToken ct)
     {
@@ -192,6 +204,7 @@ public class PipelinesController : ControllerBase
     }
 
     /// <summary>Executa leitura + transformação sem gravar no destino, para inspecionar o resultado antes de publicar.</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("{id:guid}/dry-run")]
     public IActionResult DryRun(Guid id)
     {

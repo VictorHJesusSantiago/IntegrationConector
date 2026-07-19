@@ -1,5 +1,6 @@
 using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace IntegrationConnector.Api.Controllers;
@@ -20,6 +21,7 @@ public class PipelineAlertRulesController : ControllerBase
     public async Task<ActionResult<List<PipelineAlertRule>>> GetByPipeline(Guid pipelineId, CancellationToken ct)
         => Ok(await _repository.GetByPipelineIdAsync(pipelineId, ct));
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost]
     public async Task<ActionResult<PipelineAlertRule>> Create(PipelineAlertRule rule, CancellationToken ct)
     {
@@ -28,6 +30,7 @@ public class PipelineAlertRulesController : ControllerBase
         return Ok(rule);
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<PipelineAlertRule>> Update(Guid id, PipelineAlertRule rule, CancellationToken ct)
     {

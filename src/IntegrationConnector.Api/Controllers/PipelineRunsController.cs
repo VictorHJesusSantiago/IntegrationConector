@@ -69,6 +69,7 @@ public class PipelineRunsController : ControllerBase
         => Ok(await _runRepository.GetStatsAsync(ct));
 
     /// <summary>Sinaliza cancelamento cooperativo de uma execução em andamento.</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("{id:guid}/cancel")]
     public IActionResult Cancel(Guid id)
         => _cancellationRegistry.Cancel(id) ? Accepted() : NotFound("Execução não está em andamento ou já finalizou.");
