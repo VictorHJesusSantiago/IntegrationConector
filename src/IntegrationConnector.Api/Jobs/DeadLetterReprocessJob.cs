@@ -1,4 +1,5 @@
 using IntegrationConnector.Core.Dtos;
+using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Interfaces;
 using IntegrationConnector.Transformation;
 using Microsoft.Extensions.Logging;
@@ -48,13 +49,13 @@ public class DeadLetterReprocessJob
         var targetConnector = await _connectorRepository.GetByIdAsync(definition.TargetConnectorId, ct);
         if (targetConnector is null) return;
 
-        targetConnector.ConfigurationJson = _secretProtector.Unprotect(targetConnector.ConfigurationJson);
+        var decryptedTarget = targetConnector.WithDecryptedConfig(_secretProtector);
         var plugin = _pluginFactory.Resolve(targetConnector.Type);
         var transformed = _transformer.Transform(record.RecordJson, definition.Mappings);
 
         try
         {
-            await plugin.WriteAsync(targetConnector, definition.TargetOperation, transformed, ct);
+            await plugin.WriteAsync(decryptedTarget, definition.TargetOperation, transformed, ct);
             record.Reprocessed = true;
             record.ReprocessedAt = DateTime.UtcNow;
             _deadLetterRepository.Update(record);
