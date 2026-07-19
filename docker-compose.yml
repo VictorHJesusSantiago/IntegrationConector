@@ -44,8 +44,12 @@ services:
       ConnectionStrings__Default: "Host=postgres;Port=5432;Database=integrationconnector;Username=postgres;Password=postgres"
       RabbitMq__Host: rabbitmq
       Jwt__SigningKey: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS"
+      DataProtection__KeysDirectory: "/keys"
+    volumes:
+      - integrationconnector_dpkeys:/keys
     ports:
       - "8080:8080"
 
 volumes:
   integrationconnector_pgdata:
+  integrationconnector_dpkeys:
