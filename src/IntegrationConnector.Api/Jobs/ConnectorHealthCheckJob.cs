@@ -1,3 +1,4 @@
+using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Interfaces;
 
 namespace IntegrationConnector.Api.Jobs;
@@ -32,9 +33,9 @@ public class ConnectorHealthCheckJob
         {
             try
             {
-                connector.ConfigurationJson = _secretProtector.Unprotect(connector.ConfigurationJson);
+                var decrypted = connector.WithDecryptedConfig(_secretProtector);
                 var plugin = _pluginFactory.Resolve(connector.Type);
-                var result = await plugin.TestConnectionAsync(connector, ct);
+                var result = await plugin.TestConnectionAsync(decrypted, ct);
 
                 await _healthRepository.AddAsync(new Core.Entities.ConnectorHealthCheck
                 {
