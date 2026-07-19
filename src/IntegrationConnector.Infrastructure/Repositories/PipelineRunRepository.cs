@@ -16,6 +16,7 @@ public class PipelineRunRepository : IPipelineRunRepository
 
     public Task<List<PipelineRun>> GetByPipelineIdAsync(Guid pipelineId, int take = 50, CancellationToken ct = default)
         => _db.PipelineRuns
+            .Include(x => x.Logs)
             .Where(x => x.PipelineId == pipelineId)
             .OrderByDescending(x => x.StartedAt)
             .Take(take)
@@ -23,6 +24,7 @@ public class PipelineRunRepository : IPipelineRunRepository
 
     public Task<List<PipelineRun>> GetRecentFailuresAsync(int take = 50, CancellationToken ct = default)
         => _db.PipelineRuns
+            .Include(x => x.Logs)
             .Where(x => x.Status == PipelineRunStatus.Failed)
             .OrderByDescending(x => x.StartedAt)
             .Take(take)
@@ -30,7 +32,7 @@ public class PipelineRunRepository : IPipelineRunRepository
 
     public Task<List<PipelineRun>> SearchAsync(PipelineRunSearchFilter filter, CancellationToken ct = default)
     {
-        var query = _db.PipelineRuns.AsQueryable();
+        var query = _db.PipelineRuns.Include(x => x.Logs).AsQueryable();
 
         if (filter.PipelineId.HasValue) query = query.Where(x => x.PipelineId == filter.PipelineId.Value);
         if (filter.Status.HasValue) query = query.Where(x => x.Status == filter.Status.Value);
@@ -88,6 +90,8 @@ public class PipelineRunRepository : IPipelineRunRepository
         => await _db.PipelineRuns.AddAsync(run, ct);
 
     public void Update(PipelineRun run) => _db.PipelineRuns.Update(run);
+
+    public void AddLog(PipelineRunLog log) => _db.PipelineRunLogs.Add(log);
 
     public Task<int> SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
 }

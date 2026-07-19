@@ -30,5 +30,7 @@ public class PipelineRepository : IPipelineRepository
 
     public void Remove(Pipeline pipeline) => _db.Pipelines.Remove(pipeline);
 
+    public void AddVersion(PipelineVersion version) => _db.PipelineVersions.Add(version);
+
     public Task<int> SaveChangesAsync(CancellationToken ct = default) => _db.SaveChangesAsync(ct);
 }

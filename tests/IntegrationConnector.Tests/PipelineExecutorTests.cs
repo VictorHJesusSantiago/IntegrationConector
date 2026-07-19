@@ -78,9 +78,9 @@ public class PipelineExecutorTests
 
         var plugin = new Mock<IConnectorPlugin>();
         plugin.Setup(p => p.Type).Returns(ConnectorType.Rest);
-        plugin.Setup(p => p.ReadAsync(source, It.IsAny<ConnectorOperation>(), It.IsAny<CancellationToken>()))
+        plugin.Setup(p => p.ReadAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync("{\"nome\":\"Ana\"}");
-        plugin.Setup(p => p.WriteAsync(target, It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        plugin.Setup(p => p.WriteAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
               .Returns(Task.CompletedTask);
 
         var pluginFactory = new Mock<IConnectorPluginFactory>();
@@ -117,9 +117,9 @@ public class PipelineExecutorTests
 
         var plugin = new Mock<IConnectorPlugin>();
         plugin.Setup(p => p.Type).Returns(ConnectorType.Rest);
-        plugin.Setup(p => p.ReadAsync(source, It.IsAny<ConnectorOperation>(), It.IsAny<CancellationToken>()))
+        plugin.Setup(p => p.ReadAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync("{\"nome\":\"Ana\"}");
-        plugin.Setup(p => p.WriteAsync(target, It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        plugin.Setup(p => p.WriteAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
               .ThrowsAsync(new InvalidOperationException("destino indisponível"));
 
         var pluginFactory = new Mock<IConnectorPluginFactory>();
@@ -139,7 +139,7 @@ public class PipelineExecutorTests
         Assert.NotNull(savedRun);
         Assert.Equal(PipelineRunStatus.Failed, savedRun!.Status);
         Assert.Equal(3, savedRun.AttemptCount);
-        plugin.Verify(p => p.WriteAsync(target, It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
+        plugin.Verify(p => p.WriteAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public class PipelineExecutorTests
 
         var plugin = new Mock<IConnectorPlugin>();
         plugin.Setup(p => p.Type).Returns(ConnectorType.Rest);
-        plugin.Setup(p => p.ReadAsync(source, It.IsAny<ConnectorOperation>(), It.IsAny<CancellationToken>()))
+        plugin.Setup(p => p.ReadAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<CancellationToken>()))
               .ReturnsAsync("{\"nome\":\"Ana\"}");
 
         var pluginFactory = new Mock<IConnectorPluginFactory>();
@@ -193,7 +193,7 @@ public class PipelineExecutorTests
 
         var plugin = new Mock<IConnectorPlugin>();
         plugin.Setup(p => p.Type).Returns(ConnectorType.Rest);
-        plugin.Setup(p => p.WriteAsync(target, It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        plugin.Setup(p => p.WriteAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
               .Returns(Task.CompletedTask);
 
         var pluginFactory = new Mock<IConnectorPluginFactory>();
@@ -213,6 +213,6 @@ public class PipelineExecutorTests
         Assert.NotNull(savedRun);
         Assert.Equal(PipelineRunStatus.Succeeded, savedRun!.Status);
         connectorRepo.Verify(r => r.GetByIdAsync(source.Id, It.IsAny<CancellationToken>()), Times.Never);
-        plugin.Verify(p => p.WriteAsync(target, It.IsAny<ConnectorOperation>(), It.Is<string>(s => s.Contains("Bia")), It.IsAny<CancellationToken>()), Times.Once);
+        plugin.Verify(p => p.WriteAsync(It.IsAny<Connector>(), It.IsAny<ConnectorOperation>(), It.Is<string>(s => s.Contains("Bia")), It.IsAny<CancellationToken>()), Times.Once);
     }
 }
