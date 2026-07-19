@@ -2,6 +2,7 @@ using IntegrationConnector.Api.Dtos;
 using IntegrationConnector.Api.Validation;
 using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace IntegrationConnector.Api.Controllers;
@@ -41,6 +42,7 @@ public class ConnectorsController : ControllerBase
         return connector is null ? NotFound() : Ok(connector);
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost]
     public async Task<ActionResult<Connector>> Create(CreateConnectorRequest request, CancellationToken ct)
     {
@@ -61,6 +63,7 @@ public class ConnectorsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = connector.Id }, connector);
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<Connector>> Update(Guid id, UpdateConnectorRequest request, CancellationToken ct)
     {
@@ -81,6 +84,7 @@ public class ConnectorsController : ControllerBase
         return Ok(connector);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
@@ -93,15 +97,16 @@ public class ConnectorsController : ControllerBase
         return NoContent();
     }
 
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("{id:guid}/test")]
     public async Task<ActionResult<ConnectorTestResult>> TestConnection(Guid id, CancellationToken ct)
     {
         var connector = await _repository.GetByIdAsync(id, ct);
         if (connector is null) return NotFound();
 
-        connector.ConfigurationJson = _secretProtector.Unprotect(connector.ConfigurationJson);
+        var decrypted = connector.WithDecryptedConfig(_secretProtector);
         var plugin = _pluginFactory.Resolve(connector.Type);
-        var result = await plugin.TestConnectionAsync(connector, ct);
+        var result = await plugin.TestConnectionAsync(decrypted, ct);
         return Ok(result);
     }
 
