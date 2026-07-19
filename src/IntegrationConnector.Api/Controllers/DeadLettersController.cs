@@ -4,6 +4,7 @@ using IntegrationConnector.Core.Dtos;
 using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Interfaces;
 using IntegrationConnector.Transformation;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 
@@ -49,6 +50,7 @@ public class DeadLettersController : ControllerBase
     /// Reprocessa um registro específico do dead-letter: reaplica o mapeamento vigente do pipeline
     /// (mesma versão ativa) e regrava diretamente no conector de destino, sem repetir a leitura da origem.
     /// </summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("{id:guid}/reprocess")]
     public async Task<IActionResult> Reprocess(Guid id, CancellationToken ct)
     {
@@ -66,14 +68,14 @@ public class DeadLettersController : ControllerBase
         var targetConnector = await _connectorRepository.GetByIdAsync(definition.TargetConnectorId, ct);
         if (targetConnector is null) return BadRequest("Conector de destino não encontrado.");
 
-        targetConnector.ConfigurationJson = _secretProtector.Unprotect(targetConnector.ConfigurationJson);
+        var decryptedTarget = targetConnector.WithDecryptedConfig(_secretProtector);
         var plugin = _pluginFactory.Resolve(targetConnector.Type);
 
         var transformed = _transformer.Transform(record.RecordJson, definition.Mappings);
 
         try
         {
-            await plugin.WriteAsync(targetConnector, definition.TargetOperation, transformed, ct);
+            await plugin.WriteAsync(decryptedTarget, definition.TargetOperation, transformed, ct);
             record.Reprocessed = true;
             record.ReprocessedAt = DateTime.UtcNow;
             _deadLetterRepository.Update(record);
@@ -87,6 +89,7 @@ public class DeadLettersController : ControllerBase
     }
 
     /// <summary>Reprocessa em lote todos os registros pendentes de uma execução, em segundo plano.</summary>
+    [Authorize(Roles = "Admin,Operator")]
     [HttpPost("by-run/{runId:guid}/reprocess-all")]
     public async Task<IActionResult> ReprocessAll(Guid runId, CancellationToken ct)
     {
