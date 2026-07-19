@@ -16,12 +16,14 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\IntegrationConnector.Core\IntegrationConnector.Core.csproj" />
     <ProjectReference Include="..\..\src\IntegrationConnector.Transformation\IntegrationConnector.Transformation.csproj" />
     <ProjectReference Include="..\..\src\IntegrationConnector.Engine\IntegrationConnector.Engine.csproj" />
+    <ProjectReference Include="..\..\src\IntegrationConnector.Infrastructure\IntegrationConnector.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
