@@ -20,6 +20,14 @@ public interface IPipelineRepository
     Task AddAsync(Pipeline pipeline, CancellationToken ct = default);
     void Update(Pipeline pipeline);
     void Remove(Pipeline pipeline);
+
+    /// <summary>
+    /// Rastreia explicitamente uma nova <see cref="PipelineVersion"/> como "Added" ao publicar em um
+    /// Pipeline já existente/rastreado. Mesmo motivo de <see cref="IPipelineRunRepository.AddLog"/>:
+    /// evita que o EF Core marque a versão nova como "Modified" pela heurística de chave não-default.
+    /// </summary>
+    void AddVersion(PipelineVersion version);
+
     Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
 
@@ -34,6 +42,15 @@ public interface IPipelineRunRepository
     Task<int> PurgeOlderThanAsync(DateTime cutoffUtc, CancellationToken ct = default);
     Task AddAsync(PipelineRun run, CancellationToken ct = default);
     void Update(PipelineRun run);
+
+    /// <summary>
+    /// Rastreia explicitamente um novo <see cref="PipelineRunLog"/> como "Added". Necessário porque
+    /// seu Id é um Guid gerado no cliente (não-default): se apenas adicionado à coleção de navegação
+    /// de um PipelineRun já rastreado, o EF Core o marcaria incorretamente como "Modified" (heurística
+    /// de chave), gerando um UPDATE para uma linha inexistente.
+    /// </summary>
+    void AddLog(PipelineRunLog log);
+
     Task<int> SaveChangesAsync(CancellationToken ct = default);
 }
 
