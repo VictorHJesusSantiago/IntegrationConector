@@ -98,7 +98,7 @@ public class RestConnectorPlugin : IConnectorPlugin
             {
                 var next = json.SelectToken(NormalizeJsonPath(pagination.NextLinkPath))?.Value<string>();
                 if (string.IsNullOrWhiteSpace(next)) break;
-                currentUrl = Uri.TryCreate(next, UriKind.Absolute, out _) ? next : BuildUrl(config.BaseUrl, next);
+                currentUrl = IsAbsoluteHttpUrl(next) ? next : BuildUrl(config.BaseUrl, next);
             }
         }
 
@@ -208,7 +208,17 @@ public class RestConnectorPlugin : IConnectorPlugin
     }
 
     private static string BuildUrl(string baseUrl, string target)
-        => Uri.TryCreate(target, UriKind.Absolute, out _) ? target : $"{baseUrl.TrimEnd('/')}/{target.TrimStart('/')}";
+        => IsAbsoluteHttpUrl(target) ? target : $"{baseUrl.TrimEnd('/')}/{target.TrimStart('/')}";
+
+    /// <summary>
+    /// Verifica se a string já é uma URL http(s) absoluta. Não usar apenas
+    /// <c>Uri.TryCreate(target, UriKind.Absolute, out _)</c>: em Linux, esse método considera um
+    /// caminho iniciado por "/" (ex.: "/api/overview") como uma URI de arquivo absoluta válida
+    /// (file:///...), fazendo com que targets relativos comuns sejam tratados como já-absolutos e
+    /// o BaseUrl do conector nunca seja concatenado — quebrando toda chamada REST em produção (Linux).
+    /// </summary>
+    private static bool IsAbsoluteHttpUrl(string value)
+        => Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     private static string AppendQueryParam(string url, string paramName, string value)
     {
