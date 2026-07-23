@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using IntegrationConnector.Core.Dtos;
 using IntegrationConnector.Core.Enums;
@@ -55,7 +56,7 @@ public class DataTransformer : IDataTransformer
     }
 
     private static string NormalizeJsonPath(string path)
-        => path.StartsWith("$", StringComparison.Ordinal) ? path : "$." + path;
+        => path.StartsWith('$') ? path : "$." + path;
 
     private static JToken ApplyFunction(JToken? value, JToken? secondValue, TransformFunction function, string? arg)
     {
@@ -76,23 +77,27 @@ public class DataTransformer : IDataTransformer
             case TransformFunction.Trim:
                 return AsString(value).Trim();
 
+            // Cultura invariante em TODA conversão texto<->número/data: o payload de origem é JSON
+            // canônico, não texto localizado. Sem isso, o resultado passaria a depender do locale do
+            // servidor — "1.234" viraria 1234 numa máquina pt-BR e 1,234 numa en-US, e uma data
+            // "03/04/2026" mudaria de mês conforme o host. É corretude, não estilo.
             case TransformFunction.DateFormat:
                 if (value is null) return string.Empty;
-                var parsed = DateTime.Parse(value.ToString());
-                return parsed.ToString(string.IsNullOrWhiteSpace(arg) ? "yyyy-MM-dd" : arg);
+                var parsed = DateTime.Parse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+                return parsed.ToString(string.IsNullOrWhiteSpace(arg) ? "yyyy-MM-dd" : arg, CultureInfo.InvariantCulture);
 
             case TransformFunction.Concat:
                 return AsString(value) + (arg ?? string.Empty);
 
             case TransformFunction.Number:
-                return value is null ? 0 : (JToken)decimal.Parse(value.ToString());
+                return value is null ? 0 : (JToken)decimal.Parse(value.ToString(), CultureInfo.InvariantCulture);
 
             case TransformFunction.Split:
             {
                 // arg = "delimitador|indice" (ex.: ",|0")
                 var parts = (arg ?? ",|0").Split('|');
                 var delimiter = parts[0];
-                var index = parts.Length > 1 ? int.Parse(parts[1]) : 0;
+                var index = parts.Length > 1 ? int.Parse(parts[1], CultureInfo.InvariantCulture) : 0;
                 var segments = AsString(value).Split(delimiter);
                 return index >= 0 && index < segments.Length ? segments[index] : string.Empty;
             }
@@ -125,8 +130,8 @@ public class DataTransformer : IDataTransformer
             case TransformFunction.Math:
             {
                 // arg = "+", "-", "*" ou "/" entre value e secondValue
-                var left = value is null ? 0m : decimal.Parse(value.ToString());
-                var right = secondValue is null ? 0m : decimal.Parse(secondValue.ToString());
+                var left = value is null ? 0m : decimal.Parse(value.ToString(), CultureInfo.InvariantCulture);
+                var right = secondValue is null ? 0m : decimal.Parse(secondValue.ToString(), CultureInfo.InvariantCulture);
                 return (arg ?? "+") switch
                 {
                     "-" => left - right,
@@ -230,11 +235,11 @@ public class DataTransformer : IDataTransformer
         foreach (var raw in path.Split('.', StringSplitOptions.RemoveEmptyEntries))
         {
             var openIdx = raw.IndexOf('[');
-            if (openIdx >= 0 && raw.EndsWith("]"))
+            if (openIdx >= 0 && raw.EndsWith(']'))
             {
                 var name = raw[..openIdx];
                 var idxStr = raw[(openIdx + 1)..^1];
-                result.Add((name, int.Parse(idxStr)));
+                result.Add((name, int.Parse(idxStr, CultureInfo.InvariantCulture)));
             }
             else
             {

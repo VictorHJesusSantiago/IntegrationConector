@@ -35,7 +35,7 @@ public static class AggregationEngine
 
     private static IEnumerable<decimal> Numbers(JArray array, string fieldPath)
     {
-        var path = fieldPath.StartsWith("$", StringComparison.Ordinal) ? fieldPath : "$." + fieldPath;
+        var path = fieldPath.StartsWith('$') ? fieldPath : "$." + fieldPath;
         foreach (var item in array)
         {
             var token = item.SelectToken(path);

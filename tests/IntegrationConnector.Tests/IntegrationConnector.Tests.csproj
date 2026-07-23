@@ -17,6 +17,11 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+
+    <!-- Pin de segurança: o EF Core Sqlite 8.0.10 traz SQLitePCLRaw 2.1.6 transitivamente, afetado
+         por GHSA-2m69-gcr7-jv3q (severidade alta). Elevado explicitamente para a versão corrigida. -->
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
   </ItemGroup>
 
   <ItemGroup>
