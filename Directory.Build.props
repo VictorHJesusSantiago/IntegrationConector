@@ -6,6 +6,27 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <AnalysisMode>Recommended</AnalysisMode>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Zero-warning policy: um warning novo quebra o build (local e no CI). Sem isso, avisos de
+         analisador se acumulam até virarem ruído que ninguém lê — foi assim que 58 warnings, um
+         deles um CVE de dependência, passaram despercebidos. Supressões deliberadas ficam no
+         .editorconfig, com justificativa escrita. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- NU1902/NU1903 (vulnerabilidade em pacote) também falham o build. -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+    <WarningsNotAsErrors></WarningsNotAsErrors>
   </PropertyGroup>
+
+  <!-- Pins de segurança para dependências TRANSITIVAS vulneráveis. Nenhum projeto referencia
+       System.Text.Json diretamente: a versão 8.0.4 entrava via ASP.NET Core/EF Core e carrega
+       GHSA-8g4q-xg66-9fp4 (severidade alta, DoS por profundidade de recursão). A única forma de
+       elevar uma dependência transitiva é declará-la explicitamente. Reavaliar estes pins ao subir
+       o TargetFramework. -->
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+  </ItemGroup>
 
 </Project>
