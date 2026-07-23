@@ -24,7 +24,14 @@ namespace IntegrationConnector.Connectors.Database;
 /// </summary>
 public class DatabaseConnectorPlugin : IConnectorPlugin
 {
-    private static readonly ConcurrentDictionary<Guid, NpgsqlDataSource> PostgresPools = new();
+    /// <summary>
+    /// Pools Postgres por conector. A chave inclui a connection string — e não apenas o Id do
+    /// conector — porque editar a configuração de um conector (trocar host, usuário ou senha) não
+    /// invalidava o pool antigo: as execuções seguintes continuavam usando a credencial anterior
+    /// até o processo reiniciar, com sintomas que vão de "a mudança não fez efeito" a escrita no
+    /// banco errado após uma migração de ambiente.
+    /// </summary>
+    private static readonly ConcurrentDictionary<(Guid ConnectorId, string ConnectionString), NpgsqlDataSource> PostgresPools = new();
 
     public ConnectorType Type => ConnectorType.Database;
 
@@ -119,7 +126,19 @@ public class DatabaseConnectorPlugin : IConnectorPlugin
             return sqlConn;
         }
 
-        var dataSource = PostgresPools.GetOrAdd(connectorId, _ => NpgsqlDataSource.Create(config.ConnectionString));
+        var connectionString = config.ConnectionString;
+        var dataSource = PostgresPools.GetOrAdd(
+            (connectorId, connectionString),
+            key => NpgsqlDataSource.Create(key.ConnectionString));
+
+        // Descarta pools órfãos do mesmo conector (connection strings anteriores), liberando as
+        // conexões físicas que a configuração antiga ainda mantinha abertas.
+        foreach (var stale in PostgresPools.Keys.Where(k => k.ConnectorId == connectorId && k.ConnectionString != connectionString).ToList())
+        {
+            if (PostgresPools.TryRemove(stale, out var staleSource))
+                await staleSource.DisposeAsync();
+        }
+
         return await dataSource.OpenConnectionAsync(ct);
     }
 
