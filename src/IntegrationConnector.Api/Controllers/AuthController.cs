@@ -1,3 +1,4 @@
+using System.Globalization;
 using IntegrationConnector.Api.Dtos;
 using IntegrationConnector.Api.Security;
 using IntegrationConnector.Core.Entities;
@@ -5,6 +6,7 @@ using IntegrationConnector.Core.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace IntegrationConnector.Api.Controllers;
 
@@ -26,17 +28,20 @@ public class AuthController : ControllerBase
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth")]
     [HttpPost("login")]
     public async Task<ActionResult<LoginResponse>> Login(LoginRequest request, CancellationToken ct)
     {
         var user = await _userRepository.GetByUsernameAsync(request.Username, ct);
-        if (user is null || !user.IsActive) return Unauthorized("Usuário ou senha inválidos.");
+        if (user is null || !user.IsActive)
+            return Problem(detail: "Usuário ou senha inválidos.", statusCode: StatusCodes.Status401Unauthorized, title: "Credenciais inválidas");
 
         var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
-        if (result == PasswordVerificationResult.Failed) return Unauthorized("Usuário ou senha inválidos.");
+        if (result == PasswordVerificationResult.Failed)
+            return Problem(detail: "Usuário ou senha inválidos.", statusCode: StatusCodes.Status401Unauthorized, title: "Credenciais inválidas");
 
         var token = _tokenService.GenerateToken(user);
-        var hours = int.Parse(_configuration["Jwt:ExpirationHours"] ?? "8");
+        var hours = int.Parse(_configuration["Jwt:ExpirationHours"] ?? "8", CultureInfo.InvariantCulture);
         return Ok(new LoginResponse(token, user.Username, user.Role, DateTime.UtcNow.AddHours(hours)));
     }
 
@@ -45,7 +50,7 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<User>> CreateUser(CreateUserRequest request, CancellationToken ct)
     {
         if (await _userRepository.GetByUsernameAsync(request.Username, ct) is not null)
-            return Conflict("Já existe um usuário com esse username.");
+            return Problem(detail: "Já existe um usuário com esse username.", statusCode: StatusCodes.Status409Conflict, title: "Usuário duplicado");
 
         var user = new User { Username = request.Username, Role = request.Role };
         user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
