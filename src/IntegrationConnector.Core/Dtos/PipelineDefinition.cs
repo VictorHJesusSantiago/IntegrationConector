@@ -117,12 +117,12 @@ public class RetryPolicySpec
     public bool ExponentialBackoff { get; set; } = true;
 
     /// <summary>Habilita circuit breaker: após N falhas seguidas, para de tentar por BreakDurationSeconds.</summary>
-    public bool CircuitBreakerEnabled { get; set; } = false;
+    public bool CircuitBreakerEnabled { get; set; }
     public int CircuitBreakerFailureThreshold { get; set; } = 5;
     public int CircuitBreakerBreakDurationSeconds { get; set; } = 30;
 
     /// <summary>Timeout total da execução (leitura+transformação+escrita), em segundos. 0 = sem timeout.</summary>
-    public int TimeoutSeconds { get; set; } = 0;
+    public int TimeoutSeconds { get; set; }
 }
 
 public class ExecutionOptions

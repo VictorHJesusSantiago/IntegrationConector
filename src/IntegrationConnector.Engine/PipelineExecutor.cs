@@ -303,27 +303,39 @@ public class PipelineExecutor : IPipelineExecutor
             return;
         }
 
-        using var semaphore = new SemaphoreSlim(degreeOfParallelism);
-        var writtenCount = 0;
-        var failedCount = 0;
-        var lockObj = new object();
+        // IMPORTANTE: todos os repositórios deste executor compartilham o MESMO IntegrationDbContext
+        // (todos registrados como Scoped), e o DbContext do EF Core NÃO é thread-safe. Executar
+        // dedupe/validação/idempotência/dead-letter dentro das tasks paralelas fazia várias threads
+        // tocarem o mesmo change tracker simultaneamente — resultando em
+        // "A second operation was started on this context instance before a previous operation
+        // completed" e em corrupção da coleção run.Logs (List<T> não é thread-safe).
+        //
+        // Por isso o paralelismo agora envolve APENAS o WriteAsync do plugin de destino (I/O externo,
+        // que é justamente o que MaxDegreeOfParallelism pretende acelerar). Tudo que toca o banco
+        // acontece sequencialmente antes e depois do lote paralelo.
+        var writableRecords = new List<JToken>();
+        foreach (var record in records)
+        {
+            if (await IsDuplicateAsync(pipeline.Id, definition, record, ct)) continue;
+            if (!await ValidateRecordAsync(pipeline.Id, run, definition, record, ct)) continue;
+            writableRecords.Add(record);
+        }
 
-        var tasks = records.Select(async record =>
+        using var semaphore = new SemaphoreSlim(degreeOfParallelism);
+        var succeededRecords = new System.Collections.Concurrent.ConcurrentBag<JToken>();
+        var failedRecords = new System.Collections.Concurrent.ConcurrentBag<(JToken Record, string Error)>();
+
+        var tasks = writableRecords.Select(async record =>
         {
             await semaphore.WaitAsync(ct);
             try
             {
-                if (await IsDuplicateAsync(pipeline.Id, definition, record, ct)) return;
-                if (!await ValidateRecordAsync(pipeline.Id, run, definition, record, ct)) { lock (lockObj) failedCount++; return; }
-
                 await targetPlugin.WriteAsync(targetConnector, definition.TargetOperation, record.ToString(Newtonsoft.Json.Formatting.None), ct);
-                await MarkIdempotencyProcessedAsync(pipeline.Id, definition, new JArray(record), ct);
-                lock (lockObj) writtenCount++;
+                succeededRecords.Add(record);
             }
             catch (Exception ex)
             {
-                lock (lockObj) failedCount++;
-                await SendToDeadLetterAsync(pipeline.Id, run.Id, record, ex.Message, ct);
+                failedRecords.Add((record, ex.Message));
                 if (!definition.Execution.ContinueOnRecordError) throw;
             }
             finally
@@ -333,9 +345,17 @@ public class PipelineExecutor : IPipelineExecutor
         });
 
         await Task.WhenAll(tasks);
-        run.RecordsWritten = writtenCount;
-        run.RecordsFailed = failedCount;
-        AddLog(run, "Information", "write", $"{writtenCount} registro(s) gravado(s), {failedCount} falharam (dead-letter).");
+
+        foreach (var record in succeededRecords)
+            await MarkIdempotencyProcessedAsync(pipeline.Id, definition, new JArray(record), ct);
+
+        foreach (var (record, error) in failedRecords)
+            await SendToDeadLetterAsync(pipeline.Id, run.Id, record, error, ct);
+
+        run.RecordsWritten = succeededRecords.Count;
+        // "+=" e não "=": ValidateRecordAsync já contabilizou os registros rejeitados pelo schema.
+        run.RecordsFailed += failedRecords.Count;
+        AddLog(run, "Information", "write", $"{succeededRecords.Count} registro(s) gravado(s), {failedRecords.Count} falharam (dead-letter).");
     }
 
     private async Task<bool> ValidateRecordAsync(Guid pipelineId, PipelineRun run, PipelineDefinition definition, JToken record, CancellationToken ct)
@@ -406,7 +426,7 @@ public class PipelineExecutor : IPipelineExecutor
     }
 
     private static string NormalizeJsonPath(string path)
-        => path.StartsWith("$", StringComparison.Ordinal) ? path : "$." + path;
+        => path.StartsWith('$') ? path : "$." + path;
 
     private static int CountRecords(string json)
     {

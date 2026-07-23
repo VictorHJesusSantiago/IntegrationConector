@@ -8,31 +8,49 @@ namespace IntegrationConnector.Infrastructure.Repositories;
 
 public class PipelineRunRepository : IPipelineRunRepository
 {
+    /// <summary>
+    /// Teto rígido de linhas por consulta. O "take" chega da query string sem validação; sem este
+    /// limite, um único GET com take=10000000 materializa a tabela inteira em memória — negação de
+    /// serviço trivial e não autenticada de fato.
+    /// </summary>
+    private const int MaxTake = 500;
+
     private readonly IntegrationDbContext _db;
     public PipelineRunRepository(IntegrationDbContext db) => _db = db;
 
+    private static int ClampTake(int take) => take switch
+    {
+        < 1 => 1,
+        > MaxTake => MaxTake,
+        _ => take
+    };
+
+    // Somente esta consulta traz os logs: é a que alimenta o detalhe/exportação de uma execução.
+    // As listagens abaixo NÃO fazem Include(Logs) de propósito — uma execução pode acumular centenas
+    // de logs, e trazê-los para montar uma grade de 50 linhas multiplica o volume lido por ordens de
+    // grandeza (e ainda faz o EF materializar o join cartesiano inteiro em memória).
     public Task<PipelineRun?> GetByIdAsync(Guid id, CancellationToken ct = default)
         => _db.PipelineRuns.Include(x => x.Logs).FirstOrDefaultAsync(x => x.Id == id, ct);
 
     public Task<List<PipelineRun>> GetByPipelineIdAsync(Guid pipelineId, int take = 50, CancellationToken ct = default)
         => _db.PipelineRuns
-            .Include(x => x.Logs)
+            .AsNoTracking()
             .Where(x => x.PipelineId == pipelineId)
             .OrderByDescending(x => x.StartedAt)
-            .Take(take)
+            .Take(ClampTake(take))
             .ToListAsync(ct);
 
     public Task<List<PipelineRun>> GetRecentFailuresAsync(int take = 50, CancellationToken ct = default)
         => _db.PipelineRuns
-            .Include(x => x.Logs)
+            .AsNoTracking()
             .Where(x => x.Status == PipelineRunStatus.Failed)
             .OrderByDescending(x => x.StartedAt)
-            .Take(take)
+            .Take(ClampTake(take))
             .ToListAsync(ct);
 
     public Task<List<PipelineRun>> SearchAsync(PipelineRunSearchFilter filter, CancellationToken ct = default)
     {
-        var query = _db.PipelineRuns.Include(x => x.Logs).AsQueryable();
+        var query = _db.PipelineRuns.AsNoTracking().AsQueryable();
 
         if (filter.PipelineId.HasValue) query = query.Where(x => x.PipelineId == filter.PipelineId.Value);
         if (filter.Status.HasValue) query = query.Where(x => x.Status == filter.Status.Value);
@@ -41,7 +59,7 @@ public class PipelineRunRepository : IPipelineRunRepository
         if (!string.IsNullOrWhiteSpace(filter.ErrorContains))
             query = query.Where(x => x.ErrorMessage != null && x.ErrorMessage.Contains(filter.ErrorContains));
 
-        return query.OrderByDescending(x => x.StartedAt).Take(filter.Take).ToListAsync(ct);
+        return query.OrderByDescending(x => x.StartedAt).Take(ClampTake(filter.Take)).ToListAsync(ct);
     }
 
     public async Task<PipelineRunStats> GetStatsAsync(CancellationToken ct = default)
@@ -79,12 +97,16 @@ public class PipelineRunRepository : IPipelineRunRepository
         return count;
     }
 
-    public async Task<int> PurgeOlderThanAsync(DateTime cutoffUtc, CancellationToken ct = default)
-    {
-        var oldRuns = await _db.PipelineRuns.Where(x => x.StartedAt < cutoffUtc).ToListAsync(ct);
-        _db.PipelineRuns.RemoveRange(oldRuns);
-        return oldRuns.Count;
-    }
+    /// <summary>
+    /// Remove execuções anteriores ao corte via DELETE em lote no servidor.
+    ///
+    /// A versão anterior materializava TODA execução expirada em memória (com change tracking) só
+    /// para marcá-las como removidas — num banco com meses de histórico isso é um OutOfMemory
+    /// esperando acontecer, justamente no job que deveria conter o crescimento da tabela.
+    /// Os PipelineRunLog associados são removidos pelo cascade configurado no DbContext.
+    /// </summary>
+    public Task<int> PurgeOlderThanAsync(DateTime cutoffUtc, CancellationToken ct = default)
+        => _db.PipelineRuns.Where(x => x.StartedAt < cutoffUtc).ExecuteDeleteAsync(ct);
 
     public async Task AddAsync(PipelineRun run, CancellationToken ct = default)
         => await _db.PipelineRuns.AddAsync(run, ct);
