@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using IntegrationConnector.Core.Dtos;
@@ -53,7 +54,7 @@ public class RestConnectorPlugin : IConnectorPlugin
         return string.IsNullOrWhiteSpace(content) ? "{}" : content;
     }
 
-    private async Task<string> ReadPaginatedAsync(HttpClient client, RestConnectorConfig config, ConnectorOperation operation, CancellationToken ct)
+    private static async Task<string> ReadPaginatedAsync(HttpClient client, RestConnectorConfig config, ConnectorOperation operation, CancellationToken ct)
     {
         var pagination = operation.Pagination!;
         var allItems = new JArray();
@@ -63,7 +64,7 @@ public class RestConnectorPlugin : IConnectorPlugin
         for (int page = 0; page < pagination.MaxPages; page++)
         {
             var urlForThisPage = pagination.Mode == "PageNumber"
-                ? AppendQueryParam(currentUrl, pagination.PageParam, pageNumber.ToString())
+                ? AppendQueryParam(currentUrl, pagination.PageParam, pageNumber.ToString(CultureInfo.InvariantCulture))
                 : currentUrl;
 
             using var request = new HttpRequestMessage(HttpMethod.Get, urlForThisPage);
@@ -227,7 +228,7 @@ public class RestConnectorPlugin : IConnectorPlugin
     }
 
     private static string NormalizeJsonPath(string path)
-        => path.StartsWith("$", StringComparison.Ordinal) ? path : "$." + path;
+        => path.StartsWith('$') ? path : "$." + path;
 
     private static string MergeTemplate(string? templateJson, string payloadJson)
     {
