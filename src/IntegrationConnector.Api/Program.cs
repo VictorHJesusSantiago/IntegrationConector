@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Hangfire;
 using Hangfire.PostgreSql;
 using IntegrationConnector.Api.Jobs;
+using IntegrationConnector.Api.Middleware;
 using IntegrationConnector.Api.Security;
 using IntegrationConnector.Connectors.Abstractions;
 using IntegrationConnector.Connectors.Database;
@@ -112,6 +113,30 @@ builder.Services.AddHangfireServer(options => options.WorkerCount = Environment.
 builder.Services.AddSingleton<JwtTokenService>();
 
 var jwtSection = builder.Configuration.GetSection("Jwt");
+
+// Uma SigningKey ausente, curta ou ainda com o valor placeholder permitiria a QUALQUER pessoa forjar
+// tokens HS256 válidos — comprometimento total da autenticação. Fora de Development a aplicação se
+// recusa a iniciar; em Development gera-se uma chave aleatória efêmera para que `docker compose up` e
+// `dotnet run` continuem funcionando sem configuração, mas sem nenhuma chave fraca conhecida existir.
+// Uma chave HS256 forte precisa de >= 32 bytes.
+const string PlaceholderSigningKey = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS";
+var signingKey = jwtSection["SigningKey"];
+
+if (string.IsNullOrWhiteSpace(signingKey) || signingKey.Length < 32 || signingKey == PlaceholderSigningKey)
+{
+    if (!builder.Environment.IsDevelopment())
+    {
+        throw new InvalidOperationException(
+            "Jwt:SigningKey ausente, curta demais (< 32 caracteres) ou ainda com o valor placeholder. " +
+            "Defina uma chave aleatória forte via a variável de ambiente Jwt__SigningKey antes de iniciar a aplicação.");
+    }
+
+    signingKey = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(48));
+    Console.WriteLine(
+        "[AVISO] Jwt:SigningKey não configurada. Uma chave aleatória EFÊMERA foi gerada para este " +
+        "processo (somente Development): os tokens emitidos deixam de valer a cada reinício.");
+}
+
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -127,7 +152,7 @@ builder.Services.AddAuthentication(options =>
         ValidateIssuerSigningKey = true,
         ValidIssuer = jwtSection["Issuer"],
         ValidAudience = jwtSection["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["SigningKey"]!))
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey))
     };
 });
 
@@ -151,6 +176,19 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0
             }));
+
+    // Limite dedicado (bem mais estrito) para o login: o teto global de 200/min é frouxo demais para
+    // conter força bruta de senha. 10 tentativas por minuto por IP tornam ataque online inviável sem
+    // penalizar o uso legítimo.
+    options.AddPolicy("auth", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
 });
 
 // ---------- API ----------
@@ -162,6 +200,19 @@ builder.Services.AddControllers(options =>
     // Entidades como Pipeline <-> PipelineVersion e PipelineRun <-> PipelineRunLog têm referências
     // de navegação bidirecionais (EF Core); sem isso, a serialização quebra com StackOverflow/loop.
     options.SerializerSettings.ReferenceLoopHandling = Newtonsoft.Json.ReferenceLoopHandling.Ignore;
+});
+
+// ---------- Erros padronizados (RFC 7807 Problem Details) ----------
+// Todo erro da API — de validação, de status code sem corpo, ou exceção não tratada — sai no mesmo
+// formato, sempre com traceId para correlacionar com os logs e traces.
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = context =>
+    {
+        context.ProblemDetails.Instance ??= context.HttpContext.Request.Path;
+        context.ProblemDetails.Extensions["traceId"] =
+            System.Diagnostics.Activity.Current?.Id ?? context.HttpContext.TraceIdentifier;
+    };
 });
 
 builder.Services.AddEndpointsApiExplorer();
@@ -200,9 +251,28 @@ builder.Services.AddHealthChecks()
     .AddNpgSql(connectionString, name: "postgres")
     .AddRabbitMQ(rabbitConnectionString: $"amqp://{builder.Configuration["RabbitMq:Username"] ?? "guest"}:{builder.Configuration["RabbitMq:Password"] ?? "guest"}@{builder.Configuration["RabbitMq:Host"] ?? "localhost"}:{builder.Configuration["RabbitMq:Port"] ?? "5672"}", name: "rabbitmq");
 
+// ---------- CORS ----------
+// Allowlist explícita via configuração (Cors:AllowedOrigins). O dashboard embutido é servido pela
+// própria API (mesma origem), portanto não precisa de CORS: a política só existe para clientes
+// externos declarados. Sem origens configuradas, nenhuma origem cruzada é liberada — "AllowAnyOrigin"
+// como padrão transformava qualquer site em cliente da API.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(policy => policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
+    options.AddDefaultPolicy(policy =>
+    {
+        if (allowedOrigins.Length == 0)
+        {
+            // Nenhuma origem cruzada permitida (mesma origem continua funcionando normalmente).
+            policy.WithOrigins(Array.Empty<string>());
+            return;
+        }
+
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
 });
 
 var app = builder.Build();
@@ -219,13 +289,41 @@ using (var scope = app.Services.CreateScope())
 
     if (await userRepository.GetByUsernameAsync(adminUsername) is null)
     {
+        // Mesma classe de problema da chave JWT: uma senha de admin padrão e pública equivale a não
+        // ter autenticação. Fora de Development exigimos uma senha explícita e não-trivial; em
+        // Development geramos uma aleatória e a imprimimos uma única vez, no boot.
+        var adminPassword = adminSection["Password"] ?? string.Empty;
+        var isWeakAdminPassword = string.IsNullOrWhiteSpace(adminPassword)
+            || adminPassword.Length < 12
+            || adminPassword == "Admin@12345";
+
+        if (isWeakAdminPassword)
+        {
+            if (!app.Environment.IsDevelopment())
+            {
+                throw new InvalidOperationException(
+                    "DefaultAdmin:Password ausente, curta demais (< 12 caracteres) ou ainda com o valor padrão. " +
+                    "Defina uma senha forte via a variável de ambiente DefaultAdmin__Password antes de iniciar a aplicação.");
+            }
+
+            adminPassword = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(18));
+            Console.WriteLine(
+                $"[AVISO] DefaultAdmin:Password não configurada. Senha aleatória gerada para '{adminUsername}' " +
+                $"(somente Development, exibida apenas agora): {adminPassword}");
+        }
+
         var admin = new User { Username = adminUsername, Role = UserRole.Admin };
         var hasher = new PasswordHasher<User>();
-        admin.PasswordHash = hasher.HashPassword(admin, adminSection["Password"] ?? "Admin@12345");
+        admin.PasswordHash = hasher.HashPassword(admin, adminPassword);
         await userRepository.AddAsync(admin);
         await userRepository.SaveChangesAsync();
     }
 }
+
+// Converte exceções não tratadas em ProblemDetails (RFC 7807) em vez de vazar stack trace, e
+// preenche o corpo de respostas de status "vazias" (401/403/404 sem payload) com o mesmo formato.
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
