@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  build-and-test:
+    name: Build, testes e análise
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache de pacotes NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore IntegrationConnector.slnx
+
+      # TreatWarningsAsErrors está ligado em Directory.Build.props: qualquer warning novo
+      # (incluindo os analisadores Roslyn) quebra o build aqui, e não em produção.
+      - name: Build (warnings = erros)
+        run: dotnet build IntegrationConnector.slnx --no-restore --configuration Release
+
+      - name: Testes
+        run: >
+          dotnet test IntegrationConnector.slnx
+          --no-build
+          --configuration Release
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./TestResults
+          --collect:"XPlat Code Coverage"
+
+      - name: Publicar resultados de teste
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./TestResults
+
+  dependency-scan:
+    name: Vulnerabilidades em dependências
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore IntegrationConnector.slnx
+
+      # `dotnet list package --vulnerable` sempre sai com código 0, mesmo encontrando CVEs.
+      # A verificação real é procurar a marcação de severidade na saída e falhar explicitamente.
+      - name: Falhar em CVE de severidade alta ou crítica
+        run: |
+          dotnet list IntegrationConnector.slnx package --vulnerable --include-transitive > vulns.txt 2>&1
+          cat vulns.txt
+          if grep -Eiq '\b(High|Critical)\b' vulns.txt; then
+            echo "::error::Dependências com vulnerabilidade de severidade alta/crítica encontradas."
+            exit 1
+          fi
+          echo "Nenhuma vulnerabilidade de severidade alta/crítica."
+
+      - name: Reportar CVEs de severidade moderada (aviso)
+        run: |
+          if grep -Eiq '\bModerate\b' vulns.txt; then
+            echo "::warning::Dependências com vulnerabilidade moderada encontradas — revisar."
+          fi
+
+  secret-scan:
+    name: Varredura de segredos
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Este repositório já distribuiu uma chave de assinatura JWT funcional embarcada.
+      # Esta etapa impede que isso volte a acontecer.
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
