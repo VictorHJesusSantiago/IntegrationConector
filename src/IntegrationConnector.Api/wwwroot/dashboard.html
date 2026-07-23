@@ -18,29 +18,129 @@
   .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
   .bar-label { width: 110px; font-size: 12px; color: #94a3b8; }
   .bar { height: 14px; background: #3b82f6; border-radius: 4px; }
+  .login { background: #1e293b; border-radius: 8px; padding: 24px; max-width: 320px; }
+  .login label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+  .login input { width: 100%; padding: 8px; margin-bottom: 12px; border-radius: 4px;
+                 border: 1px solid #334155; background: #0f172a; color: #e2e8f0; box-sizing: border-box; }
+  .login button, .logout button { padding: 8px 16px; border-radius: 4px; border: 0;
+                                  background: #3b82f6; color: #fff; cursor: pointer; font-size: 13px; }
+  .error { color: #f87171; font-size: 12px; min-height: 16px; }
+  .logout { float: right; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <h1>Painel de Observabilidade — Pipelines</h1>
 
-<div class="cards" id="cards"></div>
+<!-- Tela de login: os endpoints do painel exigem JWT como todo o resto da API. -->
+<section id="login-view" class="login">
+  <form id="login-form">
+    <label for="username">Usuário</label>
+    <input id="username" name="username" type="text" autocomplete="username" required />
+    <label for="password">Senha</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+    <button type="submit">Entrar</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</section>
 
-<div class="bar-wrap">
-  <div class="bar-row"><div class="bar-label">Sucesso</div><div class="bar ok-bar" id="bar-success"></div></div>
-  <div class="bar-row"><div class="bar-label">Falha</div><div class="bar bad-bar" id="bar-failed"></div></div>
-  <div class="bar-row"><div class="bar-label">Em execução</div><div class="bar neutral-bar" id="bar-running"></div></div>
-</div>
+<section id="dashboard-view" hidden>
+  <div class="logout"><button type="button" id="logout-button">Sair</button></div>
 
-<h2 style="font-size:14px;color:#94a3b8;">Falhas recentes</h2>
-<table>
-  <thead><tr><th>Pipeline</th><th>Início</th><th>Erro</th></tr></thead>
-  <tbody id="failures-body"></tbody>
-</table>
+  <div class="cards" id="cards"></div>
+
+  <div class="bar-wrap">
+    <div class="bar-row"><div class="bar-label">Sucesso</div><div class="bar ok-bar" id="bar-success"></div></div>
+    <div class="bar-row"><div class="bar-label">Falha</div><div class="bar bad-bar" id="bar-failed"></div></div>
+    <div class="bar-row"><div class="bar-label">Em execução</div><div class="bar neutral-bar" id="bar-running"></div></div>
+  </div>
+
+  <h2 style="font-size:14px;color:#94a3b8;">Falhas recentes</h2>
+  <table>
+    <thead><tr><th>Pipeline</th><th>Início</th><th>Erro</th></tr></thead>
+    <tbody id="failures-body"></tbody>
+  </table>
+</section>
 
 <script>
+// Escapa antes de qualquer interpolação em innerHTML. errorMessage carrega texto de sistemas
+// externos (ex.: o corpo da resposta HTTP de um conector REST de destino), portanto é conteúdo
+// não confiável: sem escape, um endpoint hostil injeta HTML/script neste painel de administração.
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+// O token fica em sessionStorage (e não em localStorage): some ao fechar a aba, reduzindo a janela
+// em que uma máquina compartilhada mantém sessão de administrador ativa. O ideal seria um cookie
+// HttpOnly, mas a API é bearer-only; a mitigação de XSS aqui é o escapeHtml acima.
+const TOKEN_KEY = 'ic.dashboard.token';
+const REFRESH_INTERVAL_MS = 15000;
+let refreshTimer = null;
+
+const getToken = () => sessionStorage.getItem(TOKEN_KEY);
+
+function showLogin(message) {
+  sessionStorage.removeItem(TOKEN_KEY);
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  document.getElementById('dashboard-view').hidden = true;
+  document.getElementById('login-view').hidden = false;
+  document.getElementById('login-error').textContent = message ?? '';
+}
+
+function showDashboard() {
+  document.getElementById('login-view').hidden = true;
+  document.getElementById('dashboard-view').hidden = false;
+  document.getElementById('login-error').textContent = '';
+}
+
+async function apiGet(path) {
+  const response = await fetch(path, { headers: { 'Authorization': `Bearer ${getToken()}` } });
+
+  // 401/403 significam token expirado ou revogado: volta ao login em vez de renderizar lixo.
+  if (response.status === 401 || response.status === 403) {
+    showLogin('Sessão expirada. Entre novamente.');
+    return null;
+  }
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+
+document.getElementById('login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const errorElement = document.getElementById('login-error');
+  errorElement.textContent = '';
+
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value
+      })
+    });
+
+    if (response.status === 429) { errorElement.textContent = 'Muitas tentativas. Aguarde um minuto.'; return; }
+    if (!response.ok) { errorElement.textContent = 'Usuário ou senha inválidos.'; return; }
+
+    const body = await response.json();
+    sessionStorage.setItem(TOKEN_KEY, body.token);
+    document.getElementById('password').value = '';
+    start();
+  } catch {
+    errorElement.textContent = 'Não foi possível contatar a API.';
+  }
+});
+
+document.getElementById('logout-button').addEventListener('click', () => showLogin());
+
 async function load() {
-  const stats = await (await fetch('/api/pipeline-runs/stats')).json();
-  const failures = await (await fetch('/api/pipeline-runs/failures?take=20')).json();
+  const stats = await apiGet('/api/pipeline-runs/stats');
+  if (stats === null) return;
+  const failures = await apiGet('/api/pipeline-runs/failures?take=20');
+  if (failures === null) return;
 
   document.getElementById('cards').innerHTML = `
     <div class="card"><div class="value neutral">${stats.totalRuns}</div><div class="label">Total de execuções</div></div>
@@ -59,15 +159,21 @@ async function load() {
 
   document.getElementById('failures-body').innerHTML = failures.map(f => `
     <tr>
-      <td>${f.pipelineId}</td>
-      <td>${new Date(f.startedAt).toLocaleString('pt-BR')}</td>
-      <td>${(f.errorMessage || '').substring(0, 120)}</td>
+      <td>${escapeHtml(f.pipelineId)}</td>
+      <td>${escapeHtml(new Date(f.startedAt).toLocaleString('pt-BR'))}</td>
+      <td>${escapeHtml(f.errorSummary || '')}</td>
     </tr>
   `).join('');
 }
 
-load();
-setInterval(load, 15000);
+function start() {
+  showDashboard();
+  load().catch(() => showLogin('Falha ao carregar os dados do painel.'));
+  if (refreshTimer) clearInterval(refreshTimer);
+  refreshTimer = setInterval(() => load().catch(() => {}), REFRESH_INTERVAL_MS);
+}
+
+if (getToken()) start(); else showLogin();
 </script>
 </body>
 </html>
