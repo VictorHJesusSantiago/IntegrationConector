@@ -1,0 +1,36 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,html,css,js}]
+indent_size = 2
+
+[*.cs]
+# --- Supressões deliberadas de analisadores ---------------------------------
+#
+# CA1848 / CA1873: exigem LoggerMessage delegates (source-generated) em vez de
+# ILogger.LogX(...). É uma micro-otimização de alocação voltada a caminhos de log
+# de altíssima frequência. Aqui o logging acontece por execução de pipeline (ordem
+# de segundos/minutos), nunca em loop quente — o ganho é nulo e o custo é trocar
+# chamadas legíveis por dezenas de delegates estáticos. Suprimido conscientemente.
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none
+
+[tests/**/*.cs]
+# CA1707: nomes de teste usam underscore por convenção deliberada
+# (should_fazer_X_quando_Y). O underscore é o separador que torna o cenário legível
+# no relatório de testes; renomear para PascalCase degradaria a documentação executável.
+dotnet_diagnostic.CA1707.severity = none
+
+[src/IntegrationConnector.Infrastructure/Migrations/**.cs]
+# Migrations são código gerado pelo EF Core e reescrito a cada `dotnet ef migrations add`.
+# Corrigir analisadores aqui é trabalho que se perde no próximo scaffold.
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none
+dotnet_diagnostic.CA1861.severity = none
