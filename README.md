@@ -42,17 +42,30 @@ docker compose up --build
 ```
 
 Sobe Postgres, RabbitMQ e a API (porta `8080`). Migrations do EF Core são aplicadas automaticamente na
-inicialização, e um usuário administrador padrão é criado (`DefaultAdmin` em `appsettings.json`).
+inicialização, e um usuário administrador é criado no primeiro boot.
 
 - Swagger: http://localhost:8080/swagger
-- Dashboard de observabilidade: http://localhost:8080/dashboard.html
+- Dashboard de observabilidade: http://localhost:8080/dashboard.html (pede login)
 - Painel do Hangfire: http://localhost:8080/hangfire
 - Métricas Prometheus: http://localhost:8080/metrics
 - Health check (Postgres + RabbitMQ): http://localhost:8080/health
 - RabbitMQ management: http://localhost:15672 (guest/guest)
 
-**Antes de ir para produção**: troque `Jwt:SigningKey` e `DefaultAdmin:Password` em `appsettings.json` (ou via
-variáveis de ambiente `Jwt__SigningKey` / `DefaultAdmin__Password`).
+Em Development, sem nenhuma configuração, a API gera no boot uma chave JWT efêmera **e** uma senha
+aleatória para o admin — a senha é impressa **uma única vez** no log de inicialização. Procure a linha
+`[AVISO] DefaultAdmin:Password não configurada` na saída do contêiner para obter a credencial.
+
+### Antes de ir para produção
+
+A API **se recusa a iniciar** fora de `ASPNETCORE_ENVIRONMENT=Development` sem estas variáveis:
+
+| Variável | Exigência |
+|---|---|
+| `Jwt__SigningKey` | Aleatória, 32+ caracteres |
+| `DefaultAdmin__Password` | 12+ caracteres, diferente do valor padrão histórico |
+
+Defina também, se houver front-end em outro domínio, `Cors__AllowedOrigins__0`, `Cors__AllowedOrigins__1`,
+… — sem isso nenhuma origem cruzada é liberada (o dashboard embutido é mesma origem e não precisa disso).
 
 ## Como executar localmente (sem Docker)
 
@@ -68,11 +81,22 @@ A API exige um JWT válido em todos os endpoints, exceto `POST /api/auth/login` 
 
 ```bash
 curl -X POST http://localhost:8080/api/auth/login -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"Admin@12345"}'
+  -d '{"username":"admin","password":"SUA_SENHA"}'
 ```
 
 Use o `token` retornado no cabeçalho `Authorization: Bearer {token}`. Papéis (`Viewer`, `Operator`, `Admin`)
 controlam o acesso; crie novos usuários via `POST /api/auth/users` (somente `Admin`).
+
+O login tem limite dedicado de **10 tentativas por minuto por IP** (responde `429` ao estourar),
+além do teto global de 200 req/min. Erros da API seguem o formato RFC 7807 (`application/problem+json`)
+e incluem um `traceId` para correlação com os logs.
+
+### Segredos de conector nas respostas
+
+`GET /api/connectors` e `GET /api/connectors/{id}` devolvem os campos sensíveis (senha, token,
+connection string, chave privada) como `"***"` — nunca o valor, nem o texto cifrado. No `PUT`, qualquer
+campo enviado com `"***"` **preserva o segredo já armazenado**, de modo que o ciclo
+`GET → editar um campo → PUT` funciona sem apagar as credenciais.
 
 ## Fluxo de uso típico
 
@@ -106,7 +130,10 @@ controlam o acesso; crie novos usuários via `POST /api/auth/users` (somente `Ad
 
 ## Observabilidade
 
-- Dashboard HTML (`/dashboard.html`), painel Hangfire, métricas Prometheus (`/metrics`).
+- Dashboard HTML (`/dashboard.html`) — exige login; todos os endpoints que ele consome são
+  autenticados. Listagens de execução retornam um resumo sem `ErrorStackTrace`; o detalhe completo
+  fica em `GET /api/pipeline-runs/{id}`.
+- Painel Hangfire e métricas Prometheus (`/metrics`).
 - Alertas por e-mail (SMTP local, seção `Smtp` em `appsettings.json`) configurados por
   `POST /api/pipeline-alert-rules` (N falhas consecutivas).
 - Checagem periódica de saúde de conectores (job a cada 15 min) via `GET /api/connectors/health`.
@@ -114,11 +141,20 @@ controlam o acesso; crie novos usuários via `POST /api/auth/users` (somente `Ad
 - Logs mascaram CPF e e-mail antes de irem para o console (evita vazamento de PII).
 - Auditoria (`AuditLogEntry`) registra criação/edição/remoção/publicação/execução manual.
 
-## Testes
+## Testes e qualidade
 
 ```bash
 dotnet test
 ```
+
+O build roda com **política de zero warning** (`TreatWarningsAsErrors`) e auditoria de dependências
+(`NuGetAudit` em nível `low`, incluindo transitivas): qualquer warning de analisador ou CVE novo
+quebra a compilação, localmente e no CI. Supressões deliberadas ficam no `.editorconfig`, sempre com
+justificativa escrita.
+
+O pipeline de CI (`.github/workflows/ci.yml`) executa, em cada push e PR: build em Release, a suíte de
+testes com cobertura, scan explícito de vulnerabilidades (falha em severidade alta/crítica) e varredura
+de segredos versionados com gitleaks.
 
 ## Adicionando um novo tipo de conector
 
