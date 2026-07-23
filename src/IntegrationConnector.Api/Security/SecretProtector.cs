@@ -12,6 +12,7 @@ namespace IntegrationConnector.Api.Security;
 public class SecretProtector : ISecretProtector
 {
     private const string ProtectedPrefix = "protected:";
+    private const string RedactedMarker = "***";
 
     private static readonly HashSet<string> SensitiveFieldNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -29,6 +30,56 @@ public class SecretProtector : ISecretProtector
     public string Protect(string configurationJson) => Transform(configurationJson, isProtect: true);
 
     public string Unprotect(string configurationJson) => Transform(configurationJson, isProtect: false);
+
+    public string Redact(string configurationJson)
+    {
+        if (string.IsNullOrWhiteSpace(configurationJson)) return configurationJson;
+
+        JObject root;
+        try { root = JObject.Parse(configurationJson); }
+        catch { return "{}"; } // JSON inválido nunca deve ser ecoado cru para o cliente.
+
+        foreach (var property in root.Properties())
+        {
+            if (!SensitiveFieldNames.Contains(property.Name)) continue;
+            if (property.Value.Type != JTokenType.String) continue;
+            if (string.IsNullOrEmpty(property.Value.Value<string>())) continue;
+
+            property.Value = RedactedMarker;
+        }
+
+        return root.ToString(Newtonsoft.Json.Formatting.None);
+    }
+
+    public string MergeRedactedSecrets(string incomingJson, string existingProtectedJson)
+    {
+        if (string.IsNullOrWhiteSpace(incomingJson)) return incomingJson;
+
+        JObject incoming;
+        try { incoming = JObject.Parse(incomingJson); }
+        catch { return incomingJson; }
+
+        JObject existing;
+        try { existing = JObject.Parse(string.IsNullOrWhiteSpace(existingProtectedJson) ? "{}" : existingProtectedJson); }
+        catch { existing = new JObject(); }
+
+        foreach (var property in incoming.Properties())
+        {
+            if (!SensitiveFieldNames.Contains(property.Name)) continue;
+            if (property.Value.Type != JTokenType.String) continue;
+            if (property.Value.Value<string>() != RedactedMarker) continue;
+
+            // O cliente devolveu o marcador: mantém o valor já persistido (cifrado) intacto.
+            // Se não havia valor anterior, o campo simplesmente sai da configuração.
+            var existingValue = existing[property.Name];
+            if (existingValue is not null)
+                property.Value = existingValue.DeepClone();
+            else
+                property.Value = string.Empty;
+        }
+
+        return incoming.ToString(Newtonsoft.Json.Formatting.None);
+    }
 
     private string Transform(string configurationJson, bool isProtect)
     {
