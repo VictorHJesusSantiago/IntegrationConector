@@ -43,7 +43,10 @@ services:
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Default: "Host=postgres;Port=5432;Database=integrationconnector;Username=postgres;Password=postgres"
       RabbitMq__Host: rabbitmq
-      Jwt__SigningKey: "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_AT_LEAST_32_CHARS"
+      # Em Development (acima) a API gera uma chave efêmera se esta variável não for definida.
+      # Para qualquer ambiente real, defina-a com um segredo aleatório de 32+ caracteres — a API
+      # se recusa a iniciar fora de Development sem uma chave forte.
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:-}"
       DataProtection__KeysDirectory: "/keys"
     volumes:
       - integrationconnector_dpkeys:/keys
