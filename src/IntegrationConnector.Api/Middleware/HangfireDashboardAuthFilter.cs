@@ -1,5 +1,7 @@
 using Hangfire.Dashboard;
 
+namespace IntegrationConnector.Api.Middleware;
+
 /// <summary>
 /// Filtro de acesso ao painel do Hangfire. Em desenvolvimento libera acesso local;
 /// em produção deve ser combinado com autenticação (ex.: reverse proxy com Basic/OIDC).

@@ -1,3 +1,4 @@
+using System.Globalization;
 using IntegrationConnector.Core.Interfaces;
 
 namespace IntegrationConnector.Api.Jobs;
@@ -18,7 +19,7 @@ public class RetentionPurgeJob
 
     public async Task RunAsync(CancellationToken ct)
     {
-        var days = int.Parse(_configuration["Retention:PipelineRunRetentionDays"] ?? "90");
+        var days = int.Parse(_configuration["Retention:PipelineRunRetentionDays"] ?? "90", CultureInfo.InvariantCulture);
         var cutoff = DateTime.UtcNow.AddDays(-days);
         var purged = await _runRepository.PurgeOlderThanAsync(cutoff, ct);
         await _runRepository.SaveChangesAsync(ct);

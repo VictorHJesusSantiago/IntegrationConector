@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -34,7 +35,7 @@ public class JwtTokenService
             issuer: jwtSection["Issuer"],
             audience: jwtSection["Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(int.Parse(jwtSection["ExpirationHours"] ?? "8")),
+            expires: DateTime.UtcNow.AddHours(int.Parse(jwtSection["ExpirationHours"] ?? "8", CultureInfo.InvariantCulture)),
             signingCredentials: credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
