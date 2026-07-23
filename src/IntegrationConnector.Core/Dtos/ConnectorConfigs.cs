@@ -36,7 +36,7 @@ public class FtpConnectorConfig
     public int Port { get; set; } = 21;
     public string Username { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
-    public bool UseSftp { get; set; } = false;
+    public bool UseSftp { get; set; }
     public string RemoteDirectory { get; set; } = "/";
 }
 
