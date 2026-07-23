@@ -32,19 +32,22 @@ public class ConnectorsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<Connector>>> GetAll(CancellationToken ct)
-        => Ok(await _repository.GetAllAsync(ct));
+    public async Task<ActionResult<List<ConnectorResponse>>> GetAll(CancellationToken ct)
+    {
+        var connectors = await _repository.GetAllAsync(ct);
+        return Ok(connectors.Select(c => ConnectorResponse.FromEntity(c, _secretProtector)).ToList());
+    }
 
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<Connector>> GetById(Guid id, CancellationToken ct)
+    public async Task<ActionResult<ConnectorResponse>> GetById(Guid id, CancellationToken ct)
     {
         var connector = await _repository.GetByIdAsync(id, ct);
-        return connector is null ? NotFound() : Ok(connector);
+        return connector is null ? NotFound() : Ok(ConnectorResponse.FromEntity(connector, _secretProtector));
     }
 
     [Authorize(Roles = "Admin,Operator")]
     [HttpPost]
-    public async Task<ActionResult<Connector>> Create(CreateConnectorRequest request, CancellationToken ct)
+    public async Task<ActionResult<ConnectorResponse>> Create(CreateConnectorRequest request, CancellationToken ct)
     {
         if (!ConnectorConfigValidator.TryValidate(request.Type, request.ConfigurationJson, out var errors))
             return ValidationProblem(BuildModelState(errors));
@@ -60,28 +63,32 @@ public class ConnectorsController : ControllerBase
         await _repository.AddAsync(connector, ct);
         await _repository.SaveChangesAsync(ct);
         await AuditAsync("Create", "Connector", connector.Id, connector.Name, ct);
-        return CreatedAtAction(nameof(GetById), new { id = connector.Id }, connector);
+        return CreatedAtAction(nameof(GetById), new { id = connector.Id }, ConnectorResponse.FromEntity(connector, _secretProtector));
     }
 
     [Authorize(Roles = "Admin,Operator")]
     [HttpPut("{id:guid}")]
-    public async Task<ActionResult<Connector>> Update(Guid id, UpdateConnectorRequest request, CancellationToken ct)
+    public async Task<ActionResult<ConnectorResponse>> Update(Guid id, UpdateConnectorRequest request, CancellationToken ct)
     {
         var connector = await _repository.GetByIdAsync(id, ct);
         if (connector is null) return NotFound();
 
-        if (!ConnectorConfigValidator.TryValidate(connector.Type, request.ConfigurationJson, out var errors))
+        // Reidrata os segredos que o cliente recebeu redigidos ("***") ANTES de validar: do contrário
+        // um PUT vindo de um GET perderia senha/token e ainda passaria pela validação de schema.
+        var mergedConfig = _secretProtector.MergeRedactedSecrets(request.ConfigurationJson, connector.ConfigurationJson);
+
+        if (!ConnectorConfigValidator.TryValidate(connector.Type, mergedConfig, out var errors))
             return ValidationProblem(BuildModelState(errors));
 
         connector.Name = request.Name;
         connector.Description = request.Description;
-        connector.ConfigurationJson = _secretProtector.Protect(request.ConfigurationJson);
+        connector.ConfigurationJson = _secretProtector.Protect(mergedConfig);
         connector.IsActive = request.IsActive;
 
         _repository.Update(connector);
         await _repository.SaveChangesAsync(ct);
         await AuditAsync("Update", "Connector", connector.Id, connector.Name, ct);
-        return Ok(connector);
+        return Ok(ConnectorResponse.FromEntity(connector, _secretProtector));
     }
 
     [Authorize(Roles = "Admin")]
