@@ -94,5 +94,6 @@ public class QueueConnectorPlugin : IConnectorPlugin, IDisposable
             try { if (conn.IsOpen) conn.Close(); conn.Dispose(); } catch { /* melhor esforço no encerramento do pool */ }
         }
         ConnectionPool.Clear();
+        GC.SuppressFinalize(this);
     }
 }

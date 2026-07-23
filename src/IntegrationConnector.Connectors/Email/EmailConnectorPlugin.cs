@@ -43,10 +43,14 @@ public class EmailConnectorPlugin : IConnectorPlugin
 
             foreach (var attachment in message.Attachments)
             {
-                var fileName = attachment.ContentDisposition?.FileName ?? attachment.ContentType.Name ?? $"{Guid.NewGuid()}.bin";
-                var path = Path.Combine(config.AttachmentDownloadDirectory, fileName);
+                var rawFileName = attachment.ContentDisposition?.FileName ?? attachment.ContentType.Name;
+                var path = BuildSafeAttachmentPath(config.AttachmentDownloadDirectory, rawFileName);
+
+                // Content é anulável: um MimePart pode chegar sem corpo decodificável.
+                if (attachment is not MimePart { Content: not null } part) continue;
+
                 await using var fileStream = File.Create(path);
-                if (attachment is MimePart part) await part.Content.DecodeToAsync(fileStream, ct);
+                await part.Content.DecodeToAsync(fileStream, ct);
                 attachmentPaths.Add(path);
             }
 
@@ -120,6 +124,40 @@ public class EmailConnectorPlugin : IConnectorPlugin
             sw.Stop();
             return new ConnectorTestResult { Success = false, Message = ex.Message, LatencyMs = sw.ElapsedMilliseconds };
         }
+    }
+
+    /// <summary>
+    /// Monta o caminho de gravação de um anexo garantindo que ele fique DENTRO do diretório de
+    /// download configurado.
+    ///
+    /// O nome do arquivo vem do cabeçalho do anexo, ou seja: é escolhido por quem enviou o e-mail.
+    /// Um remetente hostil pode mandar um anexo chamado "../../../app/appsettings.json" ou
+    /// "/etc/cron.d/backdoor" e, com Path.Combine puro, a plataforma sobrescreveria arquivos
+    /// arbitrários do host (path traversal — OWASP A01). Reduzir ao nome-base e depois confirmar que
+    /// o caminho canônico continua sob a raiz fecha as duas variantes (relativa e absoluta).
+    /// </summary>
+    private static string BuildSafeAttachmentPath(string downloadDirectory, string? rawFileName)
+    {
+        var candidate = Path.GetFileName(rawFileName ?? string.Empty);
+
+        if (string.IsNullOrWhiteSpace(candidate) || candidate is "." or "..")
+            candidate = $"{Guid.NewGuid()}.bin";
+
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+            candidate = candidate.Replace(invalid, '_');
+
+        var root = Path.GetFullPath(downloadDirectory);
+        var fullPath = Path.GetFullPath(Path.Combine(root, candidate));
+
+        // Defesa em profundidade: mesmo após a normalização acima, só aceitamos caminhos sob a raiz.
+        var rootWithSeparator = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+
+        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Nome de anexo rejeitado por tentativa de path traversal: '{rawFileName}'.");
+
+        return fullPath;
     }
 
     private static EmailConnectorConfig ParseConfig(Connector connector)
