@@ -34,7 +34,8 @@ public class PipelineGovernanceController : ControllerBase
 
         var version1 = pipeline.Versions.FirstOrDefault(x => x.VersionNumber == v1);
         var version2 = pipeline.Versions.FirstOrDefault(x => x.VersionNumber == v2);
-        if (version1 is null || version2 is null) return NotFound("Uma das versões informadas não existe.");
+        if (version1 is null || version2 is null)
+            return Problem(detail: "Uma das versões informadas não existe.", statusCode: StatusCodes.Status404NotFound, title: "Versão não encontrada");
 
         var diff = ComputeJsonDiff(JObject.Parse(version1.DefinitionJson), JObject.Parse(version2.DefinitionJson));
         return Ok(new { fromVersion = v1, toVersion = v2, changes = diff });

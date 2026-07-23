@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Text;
+using IntegrationConnector.Api.Dtos;
 using IntegrationConnector.Core.Entities;
 using IntegrationConnector.Core.Enums;
 using IntegrationConnector.Core.Interfaces;
@@ -30,18 +32,27 @@ public class PipelineRunsController : ControllerBase
     }
 
     [HttpGet("by-pipeline/{pipelineId:guid}")]
-    public async Task<ActionResult<List<PipelineRun>>> GetByPipeline(Guid pipelineId, [FromQuery] int take = 50, CancellationToken ct = default)
-        => Ok(await _runRepository.GetByPipelineIdAsync(pipelineId, take, ct));
+    public async Task<ActionResult<List<PipelineRunSummaryResponse>>> GetByPipeline(Guid pipelineId, [FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        var runs = await _runRepository.GetByPipelineIdAsync(pipelineId, take, ct);
+        return Ok(runs.Select(PipelineRunSummaryResponse.FromEntity).ToList());
+    }
 
-    /// <summary>Anônimo por design: alimenta o dashboard estático em /dashboard.html. Restrinja via proxy/rede em produção.</summary>
-    [AllowAnonymous]
+    /// <summary>
+    /// Falhas recentes. Exige autenticação: antes era anônimo para alimentar o dashboard estático, o
+    /// que publicava ErrorMessage e ErrorStackTrace de toda execução falha para qualquer um na rede.
+    /// O dashboard agora faz login e envia o token (ver wwwroot/dashboard.html).
+    /// </summary>
     [HttpGet("failures")]
-    public async Task<ActionResult<List<PipelineRun>>> GetRecentFailures([FromQuery] int take = 50, CancellationToken ct = default)
-        => Ok(await _runRepository.GetRecentFailuresAsync(take, ct));
+    public async Task<ActionResult<List<PipelineRunSummaryResponse>>> GetRecentFailures([FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        var runs = await _runRepository.GetRecentFailuresAsync(take, ct);
+        return Ok(runs.Select(PipelineRunSummaryResponse.FromEntity).ToList());
+    }
 
     /// <summary>Busca avançada por pipeline, status, período e texto no erro.</summary>
     [HttpGet("search")]
-    public async Task<ActionResult<List<PipelineRun>>> Search(
+    public async Task<ActionResult<List<PipelineRunSummaryResponse>>> Search(
         [FromQuery] Guid? pipelineId,
         [FromQuery] PipelineRunStatus? status,
         [FromQuery] DateTime? from,
@@ -59,11 +70,11 @@ public class PipelineRunsController : ControllerBase
             ErrorContains = errorContains,
             Take = take
         };
-        return Ok(await _runRepository.SearchAsync(filter, ct));
+        var runs = await _runRepository.SearchAsync(filter, ct);
+        return Ok(runs.Select(PipelineRunSummaryResponse.FromEntity).ToList());
     }
 
-    /// <summary>Anônimo por design: alimenta o dashboard estático em /dashboard.html. Restrinja via proxy/rede em produção.</summary>
-    [AllowAnonymous]
+    /// <summary>Números agregados para o dashboard. Exige autenticação (antes era anônimo).</summary>
     [HttpGet("stats")]
     public async Task<ActionResult<PipelineRunStats>> GetStats(CancellationToken ct)
         => Ok(await _runRepository.GetStatsAsync(ct));
@@ -85,7 +96,7 @@ public class PipelineRunsController : ControllerBase
         {
             var sb = new StringBuilder("Timestamp,Level,Step,Message\n");
             foreach (var log in run.Logs.OrderBy(l => l.Timestamp))
-                sb.AppendLine($"{log.Timestamp:o},{log.Level},{log.Step},\"{log.Message.Replace("\"", "\"\"")}\"");
+                sb.AppendLine(CultureInfo.InvariantCulture, $"{log.Timestamp:o},{log.Level},{log.Step},\"{log.Message.Replace("\"", "\"\"", StringComparison.Ordinal)}\"");
             return File(Encoding.UTF8.GetBytes(sb.ToString()), "text/csv", $"run-{id}-logs.csv");
         }
 
