@@ -1,3 +1,4 @@
+using System.Globalization;
 using IntegrationConnector.Core.Interfaces;
 using MailKit.Net.Smtp;
 using MailKit.Security;
@@ -76,9 +77,11 @@ public class PipelineAlertCheckJob
         };
 
         using var client = new SmtpClient();
-        await client.ConnectAsync(host, int.Parse(smtp["Port"] ?? "587"), SecureSocketOptions.StartTls, ct);
-        if (!string.IsNullOrWhiteSpace(smtp["Username"]))
-            await client.AuthenticateAsync(smtp["Username"], smtp["Password"], ct);
+        await client.ConnectAsync(host, int.Parse(smtp["Port"] ?? "587", CultureInfo.InvariantCulture), SecureSocketOptions.StartTls, ct);
+
+        var smtpUsername = smtp["Username"];
+        if (!string.IsNullOrWhiteSpace(smtpUsername))
+            await client.AuthenticateAsync(smtpUsername, smtp["Password"] ?? string.Empty, ct);
         await client.SendAsync(message, ct);
         await client.DisconnectAsync(true, ct);
     }
