@@ -56,17 +56,21 @@ public class DeadLettersController : ControllerBase
     {
         var record = await _deadLetterRepository.GetByIdAsync(id, ct);
         if (record is null) return NotFound();
-        if (record.Reprocessed) return Conflict("Registro já foi reprocessado.");
+        if (record.Reprocessed)
+            return Problem(detail: "Registro já foi reprocessado.", statusCode: StatusCodes.Status409Conflict, title: "Reprocessamento duplicado");
 
         var pipeline = await _pipelineRepository.GetByIdWithVersionsAsync(record.PipelineId, ct);
-        if (pipeline is null) return NotFound("Pipeline não encontrado.");
+        if (pipeline is null)
+            return Problem(detail: "Pipeline não encontrado.", statusCode: StatusCodes.Status404NotFound, title: "Pipeline não encontrado");
 
         var version = pipeline.Versions.FirstOrDefault(v => v.VersionNumber == pipeline.ActiveVersionNumber);
-        if (version is null) return BadRequest("Pipeline sem versão ativa.");
+        if (version is null)
+            return Problem(detail: "Pipeline sem versão ativa.", statusCode: StatusCodes.Status400BadRequest, title: "Pipeline sem versão ativa");
 
         var definition = JsonConvert.DeserializeObject<PipelineDefinition>(version.DefinitionJson)!;
         var targetConnector = await _connectorRepository.GetByIdAsync(definition.TargetConnectorId, ct);
-        if (targetConnector is null) return BadRequest("Conector de destino não encontrado.");
+        if (targetConnector is null)
+            return Problem(detail: "Conector de destino não encontrado.", statusCode: StatusCodes.Status400BadRequest, title: "Conector de destino inexistente");
 
         var decryptedTarget = targetConnector.WithDecryptedConfig(_secretProtector);
         var plugin = _pluginFactory.Resolve(targetConnector.Type);
